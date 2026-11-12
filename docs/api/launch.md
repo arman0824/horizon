@@ -1,7 +1,7 @@
 # Launch API
 
 What another launcher (Prism Launcher, MultiMC, ATLauncher, Modrinth App, HMCL or your own) needs to start Horizon:
-the options `horizon-client` takes, how it hands over an account, and how it ends. `horizon-launcher` is the
+the options `horizon-client` takes and how it ends. `horizon-launcher` is the
 reference implementation. Proposed in horizon-rust/horizon#3545.
 
 ## Overview
@@ -10,24 +10,26 @@ reference implementation. Proposed in horizon-rust/horizon#3545.
 | --- | --- |
 | Version | 0.1.0, printed by `horizon-client --launch-api` and `horizon-prepare --launch-api` |
 | Level | experimental ([stability.md](stability.md)): preview once preparing and the guide are covered too |
-| Covers | starting `horizon-client`: its options, the session JSON, the exit codes, the crash report's path; preparing with `horizon-prepare`: `--launch-api`, `--output`, `--check`, `--complete`, `--progress json` |
+| Covers | starting `horizon-client`: its options, the exit codes and the crash report's path; preparing with `horizon-prepare`: `--launch-api`, `--output`, `--check`, `--complete`, `--progress json` |
 | Not yet | finding a build (see Not there yet) |
 
 ## Guide
 
 The whole way, from picking a build to playing: [launch-guide.md](launch-guide.md). In short:
 
-1. Start Horizon only for a player signed in with a Microsoft account that owns Minecraft: Java Edition, and
-   hand over that account's session (`--session-stdin`, or `--session-file`), never on the command line. This
-   is the same owner gate `horizon-launcher` applies before every start. Horizon never downloads Mojang's
-   files; a launcher that does downloads them only for that owner.
+1. **This fork has no Microsoft sign-in** (offline play only, [../forking.md](../forking.md)): the account
+   hand-off `--session-file` / `--session-stdin` and `HORIZON_SESSION_FILE` are removed, the launcher is not
+   part of it, and the game always plays as its offline profile. Prepare the resources from your own copy of
+   Minecraft once (`horizon-prepare`, below) and start: single player, opening a world to LAN and joining
+   offline-mode servers all work. A server in online mode refuses the player, as it would a vanilla client
+   with no account.
 2. Ask the build what it takes: `horizon-client --launch-api` prints JSON with `launch_api` (the version),
    `options` and `content` (which mods, shader packs and packs it loads). Pass only options it lists: any other is
    refused with exit code 2.
 3. Start it with a folder per instance:
 
    ```sh
-   horizon-client --resources PREPARED --game-dir INSTANCE --home INSTANCE --width 1280 --height 720 --session-stdin
+   horizon-client --resources PREPARED --game-dir INSTANCE --home INSTANCE --width 1280 --height 720
    ```
 
 4. Watch the exit code. On 2, stderr names the refused option (`Horizon: --width: …`). On 1 or 101, the last
@@ -38,21 +40,6 @@ The whole way, from picking a build to playing: [launch-guide.md](launch-guide.m
 [launch-reference.md](launch-reference.md), generated from `crates/horizon-client/src/game/launch_api.rs`: every
 option, the `--launch-api` reply and the exit codes.
 
-### The session JSON
-
-The account the game joins online-mode servers with ([microsoft-account.md](../microsoft-account.md)):
-
-```json
-{"name": "Alex", "uuid": "069a79f444e94726a5befca90e38aaf5", "access_token": "…", "user_type": "msa", "xuid": "…"}
-```
-
-- `name`, `uuid` (with or without dashes) and `access_token` are required; `user_type`, when present, is `msa`;
-  `xuid` is optional.
-- `--session-stdin`: write the JSON to the game's standard input and close it.
-- `--session-file PATH`: a file the game reads once and deletes at once. On Unix its mode must be 0600; a file
-  older than two minutes is refused (and deleted).
-- A session the game can't read is reported on stderr (`Horizon: not signed in: …`), and online-mode servers
-  will refuse the player.
 
 ## Preparing
 
@@ -105,12 +92,12 @@ horizon-prepare --check --output PREPARED
 
 ```sh
 horizon-client --launch-api
-printf '%s' "$SESSION_JSON" | horizon-client --resources ~/horizon/prepared --game-dir ~/instances/a --session-stdin --fullscreen
+horizon-client --resources ~/horizon/prepared --game-dir ~/instances/a --home ~/instances/a --fullscreen
 ```
 
 ## Stability
 
-Experimental: the options in the reference, the session JSON, the exit codes and the crash report line may still
+Experimental: the options in the reference, the exit codes and the crash report line may still
 change before preview. From preview on, they change only as [stability.md](stability.md) says, and the reference's
 test keeps the contract and the code together.
 
@@ -121,6 +108,6 @@ test keeps the contract and the code together.
 ## Changelog
 
 - 0.1.0 (not released yet, so still one version): `horizon-client`'s `--game-dir`, `--home`, `--player-dir`, `--fullscreen`,
-  `--session-stdin`, `--launch-api` (with `content`), exit code 2 for a refused command line; `horizon-prepare`'s `--launch-api`,
+  `--launch-api` (with `content`), exit code 2 for a refused command line; `horizon-prepare`'s `--launch-api`,
   `--output`, `--check`, `--complete`, `--progress json`, `--version-json`, `--client-jar`, `--libraries-dir`,
   `--assets-dir` and `--java-home`.

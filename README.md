@@ -19,6 +19,11 @@
 
 **Minecraft: Java Edition 26.3, rewritten in Rust.** Your worlds, the same rules and the same terrain as the Java game, checked against it by hundreds of differential tests, in one native program with no Java. Free, open source (MIT) and unofficial: you play it with your own copy of Java Edition.
 
+> **This fork** (arman0824/horizon) **plays offline with no account at all**: the Microsoft sign-in, the
+> launcher and the session hand-off are removed, so the game starts straight into a world as an offline
+> player. Single player, LAN and offline-mode servers work; servers in online mode refuse the player.
+> Build and run it below, from your own copy of Minecraft. Details: [docs/forking.md](docs/forking.md).
+
 <p align="center">
   <img src="docs/media/readme/valley.webp" alt="A river valley with a plains village, savanna hills and a cherry grove, seen from above with a long view distance" width="100%">
 </p>
@@ -72,7 +77,7 @@ Get **the Horizon launcher** from [playhorizon.dev](https://playhorizon.dev), or
 | macOS, Intel | `horizon-launcher-macos-x64.dmg` | macOS 12 or later |
 | Linux x86-64 | `horizon-launcher-linux-x86_64.AppImage` or `.tar.gz` | a glibc distribution, X11 or Wayland, a GPU with Vulkan or OpenGL 3.3 |
 
-**You also need a Microsoft account that owns Minecraft: Java Edition.** You sign in with it in the launcher, which plays only with an account that owns the game ([why](docs/microsoft-account.md)). Horizon contains no Minecraft code or assets: an existing install (official launcher, Prism, MultiMC...) is reused, and without one the launcher downloads 26.3 from Mojang for your account. Step by step: [Install and first launch](https://playhorizon.dev/docs/install).
+**This fork needs no Microsoft account and no launcher.** It plays offline with your own copy of Java Edition's files, prepared once with `horizon-prepare` ([build from source](#build-from-source), [forking](docs/forking.md)). The official, signed build instead needs a Microsoft account that owns Minecraft: Java Edition ([why](docs/microsoft-account.md)). Horizon contains no Minecraft code or assets: an existing install (official launcher, Prism, MultiMC...) is reused, and without one the launcher downloads 26.3 from Mojang for your account. Step by step: [Install and first launch](https://playhorizon.dev/docs/install).
 
 <table>
   <tr>

@@ -66,3 +66,29 @@ only. They do not pass to forks, ports or derived launchers, whatever their lice
 
 A build made from source without a client ID of its own says that sign-in is not configured; that is
 the expected state for a fork until its own app is approved.
+
+## A fork that signs nobody in
+
+This fork (arman0824/horizon) plays offline and never asks for a Microsoft account: no launcher, no
+sign-in screen, no session hand-off. The reachable sign-in surface of the client was removed:
+
+| Removed | Where it was |
+|---|---|
+| `--session-file PATH` and `--session-stdin`, and the `HORIZON_SESSION_FILE` variable, that handed the launcher's account to the game; the game now always plays as its offline profile (`--name`, `HORIZON_PLAYER_NAME`, or the name generated once into `horizon-player.txt`) | `game/launch_options.rs` (`Options::read`, `parse`, `--help`), `game/launch_api.rs` (the Launch API table), `docs/api/launch*.md` |
+| `HORIZON_ACCOUNT_SESSIONS`, that gave splitscreen players their own signed-in account; split players are all offline now | `game/split/launcher.rs` |
+
+What still works: single player, opening a world to LAN, joining servers in offline mode (`--server HOST`),
+dedicated servers, `horizon-ctl`, mods, shader packs. What does not: joining a server in online mode (the
+server refuses the player, as it would a vanilla client with no account), skins and profiles fetched from
+the Minecraft services, the Play with Friends relay. Nothing in the build contacts Mojang, Microsoft or any
+Horizon service; `auth::current()` has no producer, so every online path stays inert.
+
+To build it (Rust 1.90+, Python 3.11+, JDK 25):
+
+```sh
+horizon-prepare --prepare --server-jar ~/Downloads/server.jar   # your own Minecraft 26.3 files
+cargo run --profile fast -p horizon-client
+```
+
+`tools/test_online_mode_parity.py` (online-mode joins through a mock session service) cannot pass here and
+is not run by this fork: it needs the session hand-off above.

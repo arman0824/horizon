@@ -23,7 +23,6 @@ fn run(cwd: &Path, args: &[&str]) -> Output {
         .env("XDG_DATA_HOME", cwd.join("xdg data"))
         .env("XDG_CONFIG_HOME", cwd.join("xdg config"))
         .env("HORIZON_NO_AUDIO", "1")
-        .env_remove("HORIZON_SESSION_FILE")
         .stdin(Stdio::null())
         .output()
         .unwrap()

@@ -93,20 +93,19 @@ makes older resources fail the check.
 
 ## 6. Start the game
 
-One folder per instance, and the owner's session on standard input:
+One folder per instance; no account is handed over:
 
 ```sh
-horizon-client --resources PREPARED --game-dir INSTANCE --home INSTANCE --width 1280 --height 720 --session-stdin
+horizon-client --resources PREPARED --game-dir INSTANCE --home INSTANCE --width 1280 --height 720
 ```
 
-- Write the [session JSON](launch.md#the-session-json) (`name`, `uuid`, `access_token`, `user_type: "msa"`,
-  `xuid` optional) to the game's standard input and close it. Never put a token on the command line, where other programs
-  can read it. `--session-file` is the alternative: the game reads the file once and deletes it.
+- This fork has no Microsoft sign-in ([../forking.md](../forking.md)): there is no session JSON and no
+  `--session-file`/`--session-stdin`. The game plays as the offline profile `--name` names, or the one it
+  generates once and keeps in `horizon-player.txt`. Single player, LAN worlds and offline-mode servers work;
+  a server in online mode refuses the player.
 - `--game-dir` holds saves, `options.txt`, resource packs, mods and screenshots; `--home` holds `logs/latest.log`
   and `crash-reports/`. `--quickPlaySingleplayer WORLD` or `--quickPlayMultiplayer HOST[:PORT]` opens a world or a
   server at once.
-- A session the game can't read is reported on stderr (`Horizon: not signed in: …`); the game still starts, and
-  online-mode servers refuse the player.
 
 ## 7. When it ends
 
