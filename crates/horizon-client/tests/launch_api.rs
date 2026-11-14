@@ -50,7 +50,7 @@ fn launch_api_prints_json_and_runs_nothing_else() {
         .iter()
         .map(|o| o["name"].as_str().unwrap())
         .collect();
-    for name in ["--resources", "--game-dir", "--home", "--session-stdin"] {
+    for name in ["--resources", "--game-dir", "--home"] {
         assert!(names.contains(&name), "{name} not in {names:?}");
     }
     assert!(!dir.join("env home").exists(), "--launch-api opened a log");

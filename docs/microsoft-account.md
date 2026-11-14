@@ -1,5 +1,9 @@
 # Microsoft account sign-in and online-mode play
 
+> **Not in this fork.** The launcher and the session hand-off are removed here
+> ([docs/forking.md](forking.md)), so nothing below runs and no account is ever produced; the game
+> plays as an offline player and online-mode servers refuse it. What follows documents upstream.
+
 Horizon signs players in with their Microsoft account in the launcher and joins online-mode
 (authenticated) servers like vanilla 26.3 does. The launcher plays only with an account that owns
 Minecraft: Java Edition ([the owner gate](#the-owner-gate)), as that account, on LAN and
@@ -280,8 +284,8 @@ Vanilla's `ClientHandshakePacketListenerImpl.handleHello`, `Crypt` and authlib's
    game and the launcher)", `InsufficientPrivilegesException` → "Multiplayer is disabled…",
    `multiplayer.access.banned` / `FORCED_USERNAME_CHANGE` → "You are banned from playing online",
    5xx or no network → "The authentication servers are currently not reachable…". Without a session
-   the game says "This server is in online mode. Sign in with your Microsoft account in the Horizon
-   launcher to join it." (Vanilla goes on after a failed join on LAN-discovered servers, which then
+   the game says "This server is in online mode. This offline build of Horizon never signs in, so it
+   cannot join it." (Vanilla goes on after a failed join on LAN-discovered servers, which then
    refuse the player anyway; Horizon stops at once.)
 5. Send `ServerboundKeyPacket` (the secret and the challenge, each RSA PKCS#1 v1.5 encrypted with
    the server key), then AES/CFB8 (key = IV = the secret) both ways.
