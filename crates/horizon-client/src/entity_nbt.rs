@@ -15,7 +15,7 @@ use crate::{
         uuid_from_tag, uuid_tag,
     },
 };
-use horizon_core::geometry::Vec3;
+use horizon_core::{geometry::Vec3, random::LegacyRandom};
 use horizon_world::{
     chunk::BlockState,
     nbt::{Compound, Tag},
@@ -715,10 +715,10 @@ pub fn mob_to_nbt(
         map.remove(&"CustomNameVisible".into());
     }
     // A styled name from the save stays unless the name changed.
-    if custom_name(&tag) != m.custom_name
-        && let Some(name) = &m.custom_name
+    if m.custom_name_changed(tag.get("CustomName"))
+        && let Some(name) = m.custom_name_tag()
     {
-        put(&mut tag, "CustomName", Tag::String(name.as_str().into()));
+        put(&mut tag, "CustomName", name);
     }
     let Tag::Compound(map) = &mut tag else {
         return tag;
@@ -1428,11 +1428,7 @@ pub fn mob_to_nbt(
                 string(crate::mobs::copper_golem::WEATHER[m.extra.variant.min(3) as usize]),
             );
         }
-        // Ghast.addAdditionalSaveData; Horizon's ghast fires power 1 whatever
-        // is saved, so a loaded value is kept as is.
-        "minecraft:ghast" => {
-            map.entry("ExplosionPower".into()).or_insert(Tag::Byte(1));
-        }
+        "minecraft:ghast" => crate::mobs::nether::to_nbt(m, map),
         _ => {}
     }
     if m.species() == S::Frog {
@@ -1820,7 +1816,7 @@ fn put_sulfur_attributes(map: &mut Compound, m: &Mob) {
 }
 /// `Brain.Packed`: the memories finalizeSpawn set, over the saved ones.
 /// `CustomName`: a text component saved as a string or a `{text: ..}` compound.
-fn custom_name(tag: &Tag) -> Option<String> {
+pub(crate) fn custom_name(tag: &Tag) -> Option<String> {
     match tag.get("CustomName")? {
         Tag::String(s) => Some(s.to_string_lossy()),
         t @ Tag::Compound(_) => match t.get("text") {
@@ -1901,6 +1897,15 @@ pub fn mob_from_nbt_with_random(
     read_mob_home(&mut m, tag);
     m.on_ground = flag(tag, "OnGround");
     m.fall_distance = float(tag.get("fall_distance")).unwrap_or(0.0);
+    let cube = matches!(
+        m.species(),
+        crate::mobs::Species::Slime | crate::mobs::Species::MagmaCube
+    );
+    if cube {
+        // AbstractCubeMob.readAdditionalSaveData: the size's attributes first,
+        // so the saved ones replace them, the type's default too.
+        crate::mobs::cube::set_size(&mut m, number(tag.get("Size")).unwrap_or(0) as i32 + 1);
+    }
     // LivingEntity.readAdditionalSaveData: the saved attribute bases, then
     // the health, the max health when there is none.
     if let Some(Tag::List(attrs)) = tag.get("attributes") {
@@ -1925,10 +1930,11 @@ pub fn mob_from_nbt_with_random(
                 // A saved base other than the type's default is the
                 // attribute's base, which `/attribute ... base get` reads.
                 "minecraft:max_health"
-                    if crate::mobs::finalize::default_value(
-                        &m,
-                        crate::mobs::finalize::Attr::MaxHealth,
-                    ) != Some(v) =>
+                    if cube
+                        || crate::mobs::finalize::default_value(
+                            &m,
+                            crate::mobs::finalize::Attr::MaxHealth,
+                        ) != Some(v) =>
                 {
                     crate::mobs::finalize::set_base(
                         &mut m,
@@ -1938,10 +1944,11 @@ pub fn mob_from_nbt_with_random(
                 }
                 "minecraft:max_health" => m.attrs.max_health = v as f32,
                 "minecraft:movement_speed"
-                    if crate::mobs::finalize::default_value(
-                        &m,
-                        crate::mobs::finalize::Attr::MovementSpeed,
-                    ) != Some(v) =>
+                    if cube
+                        || crate::mobs::finalize::default_value(
+                            &m,
+                            crate::mobs::finalize::Attr::MovementSpeed,
+                        ) != Some(v) =>
                 {
                     crate::mobs::finalize::set_base(
                         &mut m,
@@ -1951,10 +1958,11 @@ pub fn mob_from_nbt_with_random(
                 }
                 "minecraft:movement_speed" => m.attrs.speed = v,
                 "minecraft:attack_damage"
-                    if crate::mobs::finalize::default_value(
-                        &m,
-                        crate::mobs::finalize::Attr::AttackDamage,
-                    ) != Some(v) =>
+                    if cube
+                        || crate::mobs::finalize::default_value(
+                            &m,
+                            crate::mobs::finalize::Attr::AttackDamage,
+                        ) != Some(v) =>
                 {
                     crate::mobs::finalize::set_base(
                         &mut m,
@@ -1964,6 +1972,9 @@ pub fn mob_from_nbt_with_random(
                 }
                 "minecraft:attack_damage" => m.attrs.attack_damage = v as f32,
                 "minecraft:attack_knockback" => m.attrs.attack_knockback = v,
+                "minecraft:armor" if cube => {
+                    crate::mobs::finalize::set_base(&mut m, crate::mobs::finalize::Attr::Armor, v)
+                }
                 "minecraft:flying_speed"
                     if crate::mobs::finalize::default_value(
                         &m,
@@ -1982,6 +1993,9 @@ pub fn mob_from_nbt_with_random(
     }
     saved_attributes::read_attribute_modifiers(&mut m, tag);
     m.health = float(tag.get("Health")).map_or(m.attrs.max_health, |h| h as f32);
+    // setHealth clamps it to the max health the save left, before anything
+    // later in the load (a wolf's taming) changes that.
+    m.health = m.health.min(crate::mobs::finalize::loaded_max_health(&m));
     // LivingEntity.readAdditionalSaveData: `internalSetAbsorptionAmount`
     // stores the value as read; only `setAbsorptionAmount` clamps.
     m.absorption = float(tag.get("AbsorptionAmount")).map_or(0.0, |h| h as f32);
@@ -2184,6 +2198,9 @@ pub fn mob_from_nbt_with_random(
         m.max_swell = number(tag.get("Fuse")).unwrap_or(30) as i16 as i32;
         // `getByteOr("ExplosionRadius", 3)`: any numeric tag, as a byte.
         m.extra.explosion_radius = number(tag.get("ExplosionRadius")).unwrap_or(3) as i8;
+    }
+    if m.species() == crate::mobs::Species::Ghast {
+        crate::mobs::nether::from_nbt(&mut m, tag);
     }
     // InventoryCarrier.readInventoryFromTag, using the existing occupied-stack model.
     let carrier_slots = match m.species() {
@@ -2566,21 +2583,15 @@ pub fn mob_from_nbt_with_random(
         }
         restore_warden_owned_memories(&mut m, tag);
     }
-    // Armadillo.readAdditionalSaveData: the saved state through `switchToState`
-    // (`onSyncedDataUpdated` then restarts the time in that state), idle for a
-    // save that names none; then the time to the next scute, the constructor's
-    // when absent.
     if m.species() == crate::mobs::Species::Armadillo {
-        crate::mobs::armadillo::set_state(
+        let state = text(tag.get("state"));
+        let scute_time = number(tag.get("scute_time")).map(|t| t as i32);
+        crate::mobs::armadillo::load(
             &mut m,
-            crate::mobs::armadillo::state_by_name(text(tag.get("state")).as_deref()),
+            tag.get("Brain").is_some(),
+            state.as_deref(),
+            scute_time,
         );
-        if let Some(t) = number(tag.get("scute_time")) {
-            m.extra.egg_time = t as i32;
-        } else {
-            // Armadillo(): scuteTime = pickNextScuteDropTime().
-            m.extra.egg_time = crate::mobs::ai::next_scute_time(&mut m);
-        }
     }
     if m.species() == crate::mobs::Species::Ravager {
         m.extra.counter = number(tag.get("AttackTick")).unwrap_or(0) as i32;
@@ -2657,12 +2668,6 @@ pub fn mob_from_nbt_with_random(
         m.species(),
         crate::mobs::Species::Slime | crate::mobs::Species::MagmaCube
     ) {
-        // AbstractCubeMob.readAdditionalSaveData: the size's attributes, then
-        // the saved health, the max health when there is none.
-        crate::mobs::cube::set_size(&mut m, number(tag.get("Size")).unwrap_or(0) as i32 + 1);
-        if let Some(h) = float(tag.get("Health")) {
-            m.health = h as f32;
-        }
         m.extra.flag2 = flag(tag, "wasOnGround");
     }
     if m.species() == crate::mobs::Species::Phantom {
@@ -2942,7 +2947,7 @@ pub fn item_entity_from_nbt(tag: &Tag, id: u32, bob_offset: f32) -> Option<ItemE
         stuck: Vec3::ZERO,
         was_touching_water: false,
         // The caller gives it the own random that drew its UUID and bobOffs.
-        random: horizon_core::random::LegacyRandom::new(0),
+        random: horizon_core::random::EntityRandom::own(LegacyRandom::new(0)),
     })
 }
 
@@ -3313,8 +3318,9 @@ pub fn throwable_to_nbt(
     }
     // the loaded item stays (blue egg, potion effects) at `setItem`'s count 1.
     if let Tag::Compound(m) = &mut tag {
-        let st = match &p.kind {
-            ProjectileKind::Potion(s, _) => (**s).clone(),
+        let st = match (&p.kind, &p.item) {
+            (ProjectileKind::Potion(s, _), _) => (**s).clone(),
+            (_, Some(thrown)) => thrown.clone(),
             _ => crate::items::ItemStack::new(item, 1),
         };
         if let Tag::Compound(i) = m.entry("Item".into()).or_insert_with(|| item_to_nbt(&st)) {
@@ -3345,6 +3351,13 @@ pub fn throwable_from_nbt(tag: &Tag, player: Option<[i32; 4]>) -> Option<Project
     p.no_gravity = flag(tag, "NoGravity");
     load_projectile_entity_fields(&mut p, tag);
     p.on_ground = flag(tag, "OnGround");
+    if !matches!(p.kind, ProjectileKind::Potion(..))
+        && let Some(item) = tag.get("Item").and_then(item_from_nbt)
+    {
+        // Kept on the projectile: the tag it was loaded from is found by its
+        // position, so it is gone once the projectile has moved.
+        p.set_thrown_item(&item);
+    }
     Some(p)
 }
 
@@ -5978,6 +5991,44 @@ mod tests {
         // Entity.load keeps the saved Air; the orb writes it back unchanged.
         assert_eq!(tag.get("Air"), Some(&Tag::Short(32767)));
     }
+    /// `Entity.saveWithoutId` writes `Fire` for every entity and `Entity.load`
+    /// reads it back with `getShortOr("Fire", 0)`: a summon's `Fire:40s` and the
+    /// `-1s` an entity carries after leaving water both survive, an absent key
+    /// is 0, and the short wraps like `(short) remainingFireTicks`.
+    #[test]
+    fn orbs_save_and_load_their_fire() {
+        let mut o = ExperienceOrb {
+            rotation: [0.0, 0.0],
+            join: Default::default(),
+            no_gravity: false,
+            id: 0,
+            position: Vec3::new(1.0, 2.0, 3.0),
+            previous: Vec3::ZERO,
+            velocity: Vec3::ZERO,
+            value: 7,
+            age: 3,
+            on_ground: false,
+            count: 1,
+            ticks: 0,
+            health: 5,
+            air: 300,
+            following: None,
+            fall_distance: 0.0,
+            fire_ticks: 0,
+        };
+        for (ticks, saved) in [(0, 0), (40, 40), (-1, -1), (300, 300), (40_000, -25_536)] {
+            o.fire_ticks = ticks;
+            let tag = orb_to_nbt(&o, [0; 4]);
+            assert_eq!(tag.get("Fire"), Some(&Tag::Short(saved)), "saved {ticks}");
+            assert_eq!(orbs_from_nbt(&tag)[0].fire_ticks, i32::from(saved));
+        }
+        let mut tag = orb_to_nbt(&o, [0; 4]);
+        let Tag::Compound(map) = &mut tag else {
+            unreachable!()
+        };
+        map.remove(&"Fire".into());
+        assert_eq!(orbs_from_nbt(&tag)[0].fire_ticks, 0);
+    }
 }
 
 /// `Brain`'s two measured Warden Unit memories, using actual existing slots.
@@ -8303,9 +8354,13 @@ mod fireball_nbt_tests {
             ),
         ]);
         let egg = throwable_from_nbt(&raw, None).unwrap();
+        // With or without the tag it was loaded from, which is lost once it moves.
+        for raw in [Some(&raw), None] {
+            let tag = throwable_to_nbt(&egg, [1; 4], None, raw).unwrap();
+            let item = tag.get("Item").and_then(item_from_nbt).unwrap();
+            assert_eq!(&*item.item, "minecraft:blue_egg");
+        }
         let tag = throwable_to_nbt(&egg, [1; 4], None, Some(&raw)).unwrap();
-        let item = tag.get("Item").and_then(item_from_nbt).unwrap();
-        assert_eq!(&*item.item, "minecraft:blue_egg");
         assert!(tag.get("LeftOwner").is_none() && tag.get("Owner").is_none());
         assert_eq!(number(tag.get("HasBeenShot")), Some(0));
         let wind = Projectile::new(ProjectileKind::WindCharge, Vec3::ZERO, None);

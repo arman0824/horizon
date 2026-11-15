@@ -7,7 +7,7 @@ use crate::{
     collisions::SceneCollisions,
 };
 use horizon_core::{
-    geometry::{Aabb, Vec3, VoxelShape, block_floor_height, traverse_blocks},
+    geometry::{Aabb, ShapeOp, Vec3, VoxelShape, block_floor_height, traverse_blocks},
     position::BlockPos,
 };
 use horizon_world::{
@@ -529,6 +529,30 @@ impl MobWorld<'_> {
             .ok()?
             .bounds()
     }
+    /// `Block.isFaceFull(state.getCollisionShape(level, pos), Direction.UP)`:
+    /// the state at `p` covers its whole top face, as a full block does, as a
+    /// top slab and upside-down stairs do, and as a 14/16 snow layer does not.
+    pub fn top_face_full(&self, p: [i32; 3]) -> bool {
+        let state = self.world.block(p[0], p[1], p[2]);
+        if self.facts.get(state).full_collision {
+            return true;
+        }
+        let mut scene = SceneCollisions {
+            world: self.world,
+            binding: self.collision,
+            subject: None,
+        };
+        let Ok(shape) = self.collision.collision_shape(&mut scene, state, p) else {
+            return false;
+        };
+        shape
+            .face_shape(horizon_core::geometry::Direction::Up)
+            .is_ok_and(|face| {
+                VoxelShape::block()
+                    .join_is_not_empty(&face, ShapeOp::XOR)
+                    .is_ok_and(|differs| !differs)
+            })
+    }
     /// LivingEntity.hasLineOfSight: eye to eye within 128 blocks.
     pub fn line_of_sight(&self, from_eye: Vec3, to: Vec3) -> bool {
         self.line_of_sight_for(None, from_eye, to)
@@ -722,11 +746,45 @@ impl MobWorld<'_> {
     }
 }
 
+/// `ClipContext.Block.VISUAL`'s shape: `BlockBehaviour.getVisualShape`, the
+/// collision shape unless the block overrides it.
+pub enum VisualShape<'a> {
+    /// The default: the collision shape.
+    Collision,
+    /// `TransparentBlock` (glass, stained and tinted glass, copper grates),
+    /// `IronBarsBlock` (bars and panes) and `PowderSnowBlock`.
+    Empty,
+    /// `SoulSandBlock` and `MudBlock`.
+    Block,
+    /// `FenceBlock` and `SnowLayerBlock`: `getShape`, the outline.
+    Outline(&'a [[f64; 6]]),
+}
+
+/// The visual shape of `state`, by the block class that overrides
+/// `getVisualShape`.
+pub fn visual_shape(facts: &BlockFacts, state: BlockStateId) -> VisualShape<'_> {
+    let f = facts.get(state);
+    let name = f.name.trim_start_matches("minecraft:");
+    if name.ends_with("glass")
+        || name.ends_with("glass_pane")
+        || name.ends_with("_bars")
+        || name.ends_with("copper_grate")
+        || name == "powder_snow"
+    {
+        return VisualShape::Empty;
+    }
+    if matches!(name, "mud" | "soul_sand") {
+        return VisualShape::Block;
+    }
+    if name == "snow" || name.ends_with("_fence") {
+        return VisualShape::Outline(&f.outline);
+    }
+    VisualShape::Collision
+}
+
 /// Level.clip with VISUAL shapes and no fluids: the block the segment first
 /// hits, None inside when it hits nothing and outside when the segment is
-/// too long to walk. Glass and copper grates (`TransparentBlock`) and bars and panes
-/// (`IronBarsBlock`) have no visual shape; mud, soul sand and powder snow
-/// look like full blocks.
+/// too long to walk.
 pub fn visual_clip<W: DynamicCollisionWorld>(
     facts: &BlockFacts,
     collision: &BlockCollisionRegistry,
@@ -741,19 +799,26 @@ pub fn visual_clip<W: DynamicCollisionWorld>(
         if facts.is_air(id) {
             return None;
         }
-        let name = facts.get(id).name.trim_start_matches("minecraft:");
-        if name.ends_with("glass")
-            || name.ends_with("glass_pane")
-            || name.ends_with("_bars")
-            || name.ends_with("copper_grate")
-        {
-            return None;
-        }
-        if matches!(name, "mud" | "soul_sand" | "powder_snow") {
-            return full
-                .move_by(Vec3::new(f64::from(p.x), f64::from(p.y), f64::from(p.z)))
-                .clip(from, to)
+        match visual_shape(facts, id) {
+            VisualShape::Empty => return None,
+            VisualShape::Block => {
+                return full
+                    .move_by(Vec3::new(f64::from(p.x), f64::from(p.y), f64::from(p.z)))
+                    .clip(from, to)
+                    .map(|_| [p.x, p.y, p.z]);
+            }
+            VisualShape::Outline(boxes) => {
+                return VoxelShape::clip_boxes(
+                    boxes.iter().map(|b| {
+                        Aabb::new(Vec3::new(b[0], b[1], b[2]), Vec3::new(b[3], b[4], b[5]))
+                    }),
+                    from,
+                    to,
+                    p,
+                )
                 .map(|_| [p.x, p.y, p.z]);
+            }
+            VisualShape::Collision => {}
         }
         if let Ok(Some(shape)) = collision.cached_shapes().cached_shape(id) {
             return shape.clip(from, to, p).map(|_| [p.x, p.y, p.z]);
@@ -773,6 +838,11 @@ pub(crate) fn with_test_world(
     f: impl FnOnce(&MobWorld<'_>, &super::MobTypes),
 ) -> bool {
     with_built_test_world(others, |_, _| {}, f)
+}
+/// A test's level random (`Level.random`), seeded.
+#[cfg(test)]
+pub(crate) fn level_random(seed: i64) -> horizon_core::random::LevelRandom {
+    horizon_core::random::LevelRandom::for_level(horizon_core::random::LegacyRandom::new(seed))
 }
 /// `with_test_world` with `build` placing blocks first.
 #[cfg(test)]
@@ -1026,3 +1096,7 @@ mod scaffolding_sight_tests {
         let _ = ran;
     }
 }
+
+#[cfg(test)]
+#[path = "visual_sight_tests.rs"]
+mod visual_sight_tests;
