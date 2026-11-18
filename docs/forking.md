@@ -74,8 +74,8 @@ sign-in screen, no session hand-off. The reachable sign-in surface of the client
 
 | Removed | Where it was |
 |---|---|
-| `--session-file PATH` and `--session-stdin`, and the `HORIZON_SESSION_FILE` variable, that handed the launcher's account to the game; the game now always plays as its offline profile (`--name`, `HORIZON_PLAYER_NAME`, or the name generated once into `horizon-player.txt`) | `game/launch_options.rs` (`Options::read`, `parse`, `--help`), `game/launch_api.rs` (the Launch API table), `docs/api/launch*.md` |
-| `HORIZON_ACCOUNT_SESSIONS`, that gave splitscreen players their own signed-in account; split players are all offline now | `game/split/launcher.rs` |
+| `--session-file PATH` and `--session-stdin`, and the `HORIZON_SESSION_FILE` variable, that handed the launcher's account to the game; the game now always plays as its offline profile (`--name`, `HORIZON_PLAYER_NAME`, or the name generated once into `horizon-player.txt`) | `game/runtime/launch_options.rs` (`Options::read`, `parse`, `--help`), `game/runtime/launch_api.rs` (the Launch API table), `docs/api/launch*.md` |
+| `HORIZON_ACCOUNT_SESSIONS`, that gave splitscreen players their own signed-in account; split players are all offline now | `game/runtime/split/launcher.rs` |
 
 What still works: single player, opening a world to LAN, joining servers in offline mode (`--server HOST`),
 dedicated servers, `horizon-ctl`, mods, shader packs. What does not: joining a server in online mode (the
@@ -87,8 +87,14 @@ To build it (Rust 1.90+, Python 3.11+, JDK 25):
 
 ```sh
 horizon-prepare --prepare --server-jar ~/Downloads/server.jar   # your own Minecraft 26.3 files
-cargo run --profile fast -p horizon-client
+cargo run --profile fast -p horizon-game
 ```
 
 `tools/test_online_mode_parity.py` (online-mode joins through a mock session service) cannot pass here and
 is not run by this fork: it needs the session hand-off above.
+
+This fork does not run upstream's automation either: `.github/workflows/` (27 workflows written for
+horizon-rust's self-hosted runners, release train and bots), `.github/dependabot.yml`,
+`.github/CODEOWNERS` and `.coderabbit.yaml` are not in the tree, so a push here starts nothing and no
+reviewer or bot is asked for. The scripts under `tools/` stay, but only run when invoked by hand. A merge
+from upstream tries to bring the workflows back: keep them deleted.
