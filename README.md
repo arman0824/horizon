@@ -82,7 +82,7 @@ mkdir -p ~/Games && mv ~/Downloads/server.jar ~/Games/server.jar
 ## Step 4 — Build the game
 
 ```sh
-~/.cargo/bin/cargo build --profile fast -p horizon-client -p horizon-prepare
+~/.cargo/bin/cargo build --profile fast -p horizon-game -p horizon-prepare
 ```
 About 5 minutes on Apple silicon; a binary lands in `target/fast/`.
 

@@ -17,9 +17,9 @@ RESOURCES="$ROOT/.local/horizon-client/26.3"
 if [ ! -x "$BIN" ] && [ -z "$HORIZON_NO_AUTOBUILD" ]; then
     echo "play-offline: building the game first (this takes a few minutes)…"
     CARGO="${CARGO:-$HOME/.cargo/bin/cargo}"
-    "$CARGO" build --manifest-path "$ROOT/Cargo.toml" --profile fast -p horizon-client
+    "$CARGO" build --manifest-path "$ROOT/Cargo.toml" --profile fast -p horizon-game
 fi
-[ -x "$BIN" ] || { echo "play-offline: $BIN is missing; run: cargo build --profile fast -p horizon-client" >&2; exit 1; }
+[ -x "$BIN" ] || { echo "play-offline: $BIN is missing; run: cargo build --profile fast -p horizon-game" >&2; exit 1; }
 
 if [ ! -f "$RESOURCES/horizon-resources.json" ]; then
     cat >&2 <<'MSG'
