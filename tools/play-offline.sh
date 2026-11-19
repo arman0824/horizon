@@ -34,4 +34,8 @@ fi
 
 mkdir -p "$GAME_DIR"
 echo "play-offline: game folder $GAME_DIR"
+if [ -z "$(find "$RESOURCES" -name '*.ogg' 2>/dev/null | head -n 1)" ]; then
+    echo "play-offline: no sound files in $RESOURCES — the game will be silent." >&2
+    echo "play-offline: add them with: \"$ROOT/target/fast/horizon-prepare\" sounds   (run from $ROOT)" >&2
+fi
 exec "$BIN" --resources "$RESOURCES" --game-dir "$GAME_DIR" --home "$GAME_DIR" "$@"

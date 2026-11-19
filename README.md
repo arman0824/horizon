@@ -139,11 +139,17 @@ Nice to know:
 
 ### Optional: sound
 
-The game starts silent. To copy vanilla sounds (~380 MB) from your install, once:
+The game starts silent. To copy vanilla sounds (~380 MB) from your install, once — **from the repo
+root**, so they land in the folder the game is given:
 
 ```sh
 ./target/fast/horizon-prepare sounds
 ```
+
+They go into `.local/horizon-client/26.3/assets/minecraft/sounds/`, which is exactly what
+`tools/play-offline.sh` passes as `--resources`. If you prepared your resources with `--output` or a
+`--minecraft-dir` elsewhere, pass the same `--output` here. It prints `Sound assets ready: 4962
+files, 377.3 MB` even when the destination is not the folder you play from, so check that path.
 
 ---
 
@@ -177,7 +183,7 @@ Full details: [docs/forking.md](docs/forking.md) · upstream project:
 | `prepared game files are missing` | Run step 5, or pass `--resources .local/horizon-client/26.3` |
 | `--session-file: unknown option` | Expected — this fork signs nobody in |
 | A server refuses you with `invalidSession` | It is in online mode; this fork cannot join it |
-| The game is quiet | `horizon-prepare sounds` |
+| The game is quiet | Run `./target/fast/horizon-prepare sounds` **from the repo root** — it must write into the folder `--resources` names (default `.local/horizon-client/26.3`). No `Horizon: audio output …` line in `logs/latest.log` means the OS never gave the game a device. |
 | Items missing in an old modded world | The mod's files weren't present at step 5 |
 
 # Licence and credit
