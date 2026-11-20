@@ -25,6 +25,7 @@ pub const OPTIONS: &[(&str, Option<&str>)] = &[
     ("--output", Some("PATH")),
     ("--check", None),
     ("--complete", None),
+    ("--no-sounds", None),
     ("--progress", Some("json")),
     ("--launch-api", None),
 ];

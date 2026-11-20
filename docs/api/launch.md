@@ -66,8 +66,10 @@ horizon-prepare --check --output PREPARED
   gap on stdout and the command that fills it, or an `error:` line on stderr when it can't check. It tests which
   files are there and the versions they were made for, not their contents: a launcher that suspects damage
   prepares again. A folder being prepared, or whose preparation stopped, is not current.
-  `--check` refuses `--progress` and `--complete` (exit 2): they apply to preparing.
-- `--complete`: after preparing, copies the sounds and fails unless `--check` would pass.
+  `--check` refuses `--progress`, `--complete` and `--no-sounds` (exit 2): they apply to preparing.
+- `--prepare` copies the sounds (about 380 MB) as part of preparing, so the game is not silent;
+  `--no-sounds` leaves them out. A failed sound copy only warns unless `--complete` asks for the check.
+- `--complete`: fails unless `--check` would pass after preparing.
 - `--version-json`, `--client-jar`, `--libraries-dir` (Maven layout), `--assets-dir` (`indexes/` and `objects/`):
   for a launcher whose files aren't laid out like the official launcher's, each names what `--minecraft-dir`
   would give. Every file is still checked against the pins. When an earlier import beside the preparer is still
@@ -112,5 +114,5 @@ test keeps the contract and the code together.
   version moves with the game's Launch API.
 - 0.1.0 (not released yet, so still one version): `horizon-client`'s `--game-dir`, `--home`, `--player-dir`, `--fullscreen`,
   `--launch-api` (with `content`), exit code 2 for a refused command line; `horizon-prepare`'s `--launch-api`,
-  `--output`, `--check`, `--complete`, `--progress json`, `--version-json`, `--client-jar`, `--libraries-dir`,
+  `--output`, `--check`, `--complete`, `--no-sounds`, `--progress json`, `--version-json`, `--client-jar`, `--libraries-dir`,
   `--assets-dir` and `--java-home`.

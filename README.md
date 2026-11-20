@@ -2,28 +2,30 @@
   <img src="docs/media/banner.webp" alt="Horizon: the game you know, rebuilt in Rust" width="100%">
 </p>
 
-# Play Minecraft: Java Edition 26.3 in Rust — offline, no account, no launcher
+# Play Minecraft: Java Edition 26.3 in Rust — offline, no account, no sign-in
 
 **Horizon** is Minecraft: Java Edition rewritten from scratch in Rust: one fast native program, no
 Java, the same worlds and rules as the Java game. This fork removes all of the sign-in, so **the game
-opens straight into a world as an offline player** — no Microsoft account, no launcher, no login
-screen, and no internet check.
+opens straight into a world as an offline player** — no Microsoft account, no login screen, no
+session, and no internet check.
 
 **Free, and ready if Minecraft is already on this machine.** Horizon is MIT-licensed and never checks
 whether you paid for anything. It plays using the game files you already have — from the official
 launcher **or any third-party launcher** (SKLauncher, TLauncher, Prism, MultiMC, ATLauncher, Modrinth
-App, HMCL…). Nothing is downloaded and nothing is signed in to.
+App, HMCL…). Nothing is signed in to; the only thing the launcher fetches is Mojang's matching
+server file, and only when it is not already on your machine.
 
-> You need: a Mac, Linux box or Windows PC, the game files from a launcher you already use, and the
-> matching server jar (step 3). Everything else is free and open source. Not an official Minecraft
-> product — see [the licence](#licence-and-credit).
+> You need: a Mac, Linux box or Windows PC, and the game files from a launcher you already use.
+> The matching server file is fetched and checked for you (step 3). Everything else is free and open
+> source. Not an official Minecraft product — see [the licence](#licence-and-credit).
 
 ---
 
 # How to install it, step by step
 
-Copy each block into a terminal, one step at a time. On macOS this takes about **10 minutes**, most
-of it one automatic build. Windows and Linux work the same way.
+Three steps. The launcher does the rest, including the sounds, with no account anywhere. On macOS
+the first run takes about **10 minutes**, most of it one automatic build. Windows and Linux work the
+same way.
 
 ## Step 1 — Get the code
 
@@ -61,71 +63,79 @@ java -version          # "openjdk version \"25...\""
 Linux: `sudo apt install openjdk-25-jdk` (or your distro's equivalent).
 Windows: install [Temurin 25](https://adoptium.net/?specification=25) or any JDK 25.
 
-## Step 3 — Get the server jar (one file, 62 MB)
-
-Horizon builds the game's data from your client jar **and** the matching server jar. If your launcher
-already has one, skip ahead. Otherwise:
-
-- Open `~/Library/Application Support/minecraft/versions/26.3/26.3.json` (macOS) or
-  `%APPDATA%\.minecraft\versions\26.3\26.3.json` (Windows), copy the URL after
-  `"server": { "url": "` …
-- …or just search `minecraft server 26.3 download` and use Mojang's own download page
-
-Then check the file you downloaded, and put it somewhere permanent:
+## Step 3 — Open the launcher
 
 ```sh
-shasum -a 1 ~/Downloads/server.jar
-# must print: 33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c
-mkdir -p ~/Games && mv ~/Downloads/server.jar ~/Games/server.jar
+./tools/launcher.sh
 ```
 
-## Step 4 — Build the game
+A window opens, already knowing where Minecraft is. Press **Play** — that is the whole thing:
 
-```sh
-~/.cargo/bin/cargo build --profile fast -p horizon-game -p horizon-prepare
-```
-About 5 minutes on Apple silicon; a binary lands in `target/fast/`.
+1. The first run **builds the game** (5–15 minutes; the window shows the compiler's progress).
+2. It **finds the matching server file** on your machine, or downloads it from Mojang once (62 MB,
+   checked against the SHA-1 pinned in `research-lock.json`).
+3. It **prepares your game files and copies the sounds**, so the game is not silent.
+4. The game opens. **No account, no sign-in, nothing to click through.**
 
-## Step 5 — Turn your Minecraft files into the game's resources
+Later runs start in seconds: **Play** re-checks the prepared files and repairs only what changed.
 
-```sh
-./target/fast/horizon-prepare --prepare --server-jar ~/Games/server.jar
-```
+| In the launcher | What it is for |
+| --- | --- |
+| **Minecraft folder** | Where your launcher installed Minecraft. Found automatically; **Browse…** if you use SKLauncher, TLauncher, Prism, MultiMC… |
+| **Server file** | The 26.3 `server.jar`, read once to build the game's data. Found or downloaded; **Browse…** to use your own copy |
+| **Worlds & settings** | Saves, `options.txt`, player name and logs (default `~/horizon-game`) |
+| **Copy the sounds too** | On by default, about 380 MB from your own game files; off means a silent game |
+| **Prepare game files** | Runs the preparation again by hand |
+| **Play** | Builds and prepares if needed, then starts the game |
 
-It looks for your game files by itself — `~/.minecraft` on Linux/Windows,
-`~/Library/Application Support/minecraft` on macOS — or you name the folder:
+## Step 4 — Nothing else
 
-```sh
-./target/fast/horizon-prepare --prepare --minecraft-dir /path/to/.minecraft --server-jar ~/Games/server.jar
-```
+There is no sign-in step, no account to create and no launcher service to connect to. If the game
+window is open, you are done.
 
-It copies nothing off your machine, downloads nothing, and asks for no account. It ends with
-`Prepared Horizon native-client resources: …` (about 20 seconds).
+### If your launcher rewrote Minecraft's version file
 
-### If step 5 fails with "is not a 26.3 version file Horizon knows"
-
-That means your launcher (SKLauncher, TLauncher and friends) rewrites the version file, so its
-checksum no longer matches. Fix it once — your launcher's folder is not touched:
+Third-party launchers (SKLauncher, TLauncher and friends) edit the version file, so its checksum no
+longer matches the one Horizon pins. The launcher notices this, downloads Mojang's own `26.3.json`,
+checks it and prepares again — you do not have to do anything. By hand, it is:
 
 ```sh
 mkdir -p .local/minecraft/26.3
 curl -o .local/minecraft/26.3/manifest.json \
   https://piston-meta.mojang.com/v1/packages/11f1aefe473eefba0af62e3286c33b692807b2eb/26.3.json
 shasum -a 1 .local/minecraft/26.3/manifest.json    # 11f1aefe473eefba0af62e3286c33b692807b2eb
-./target/fast/horizon-prepare --prepare --server-jar ~/Games/server.jar
 ```
 
-## Step 6 — Play
+---
+
+# Play without the launcher (terminal only)
+
+The launcher is a convenience over these commands; they do exactly the same work.
 
 ```sh
+# 1. The server jar (skip when a previous run kept it)
+shasum -a 1 ~/Downloads/server.jar
+# must print: 33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c
+mkdir -p ~/Games && mv ~/Downloads/server.jar ~/Games/server.jar
+
+# 2. Build the game
+~/.cargo/bin/cargo build --profile fast -p horizon-game -p horizon-prepare
+
+# 3. Prepare your Minecraft files — the sounds are copied too
+./target/fast/horizon-prepare --prepare --server-jar ~/Games/server.jar
+
+# 4. Play
 ./tools/play-offline.sh
 ```
 
-The window opens in seconds. **No account, no sign-in, nothing to click through.** Your worlds,
-settings and player name live in `~/horizon-game/`, so they survive every rebuild.
+`horizon-prepare --prepare` ends with `Prepared Horizon native-client resources: …` and
+`Sound assets ready: 4962 files, 377.3 MB` (about 20 seconds). `--no-sounds` leaves the sounds out;
+`--complete` also fails unless nothing is missing afterwards.
 
-Press **Esc** any time to open the menu; single player, LAN and offline-mode servers all work from
-there.
+The sounds land in `.local/horizon-client/26.3/assets/minecraft/sounds/`, the folder
+`./tools/play-offline.sh` passes as `--resources`. If you prepare into another folder with
+`--output`, pass the same `--output` there. A silent game from an older clone is repaired with
+`./target/fast/horizon-prepare sounds` (run from the repo root).
 
 Nice to know:
 
@@ -137,20 +147,6 @@ Nice to know:
 ./target/fast/horizon-client --help                # every option
 ```
 
-### Optional: sound
-
-The game starts silent. To copy vanilla sounds (~380 MB) from your install, once — **from the repo
-root**, so they land in the folder the game is given:
-
-```sh
-./target/fast/horizon-prepare sounds
-```
-
-They go into `.local/horizon-client/26.3/assets/minecraft/sounds/`, which is exactly what
-`tools/play-offline.sh` passes as `--resources`. If you prepared your resources with `--output` or a
-`--minecraft-dir` elsewhere, pass the same `--output` here. It prints `Sound assets ready: 4962
-files, 377.3 MB` even when the destination is not the folder you play from, so check that path.
-
 ---
 
 # What this fork changed, and what it costs
@@ -160,7 +156,8 @@ One commit (`6b82ad3`) removes the sign-in surface and nothing else:
 - `--session-file`, `--session-stdin`, `HORIZON_SESSION_FILE` — how a signed-in account was handed
   to the game. They are now refused as unknown options.
 - `HORIZON_ACCOUNT_SESSIONS` — how splitscreen players signed in.
-- The Microsoft sign-in and the launcher are not part of the build at all.
+- The Microsoft sign-in and upstream's launcher are not part of the build at all; the offline
+  launcher in `tools/` only starts the game and downloads no account.
 
 The engine itself — world generation, physics, rendering, netcode, saving — is untouched, so all of
 vanilla's differential tests still mean what they meant upstream.
@@ -178,13 +175,13 @@ Full details: [docs/forking.md](docs/forking.md) · upstream project:
 
 | What you see | What to do |
 | --- | --- |
-| `is not a 26.3 version file Horizon knows` | Step 5's fix, above |
-| `No 26.3 server jar` | Give it `--server-jar PATH` (step 3) |
-| `prepared game files are missing` | Run step 5, or pass `--resources .local/horizon-client/26.3` |
+| `is not a 26.3 version file Horizon knows` | Your launcher rewrote it; the launcher's fix is above |
+| `No 26.3 server jar` | The launcher downloads it; by hand pass `--server-jar PATH` |
+| `prepared game files are missing` | Press **Play** (it prepares), or run the terminal block above |
 | `--session-file: unknown option` | Expected — this fork signs nobody in |
 | A server refuses you with `invalidSession` | It is in online mode; this fork cannot join it |
-| The game is quiet | Run `./target/fast/horizon-prepare sounds` **from the repo root** — it must write into the folder `--resources` names (default `.local/horizon-client/26.3`). No `Horizon: audio output …` line in `logs/latest.log` means the OS never gave the game a device. |
-| Items missing in an old modded world | The mod's files weren't present at step 5 |
+| The game is quiet | `--prepare` copies the sounds by default, so this is usually an old prepared folder: run `./target/fast/horizon-prepare sounds` **from the repo root** (it writes into the folder `--resources` names). No `Horizon: audio output …` line in `logs/latest.log` means the OS never gave the game a device. |
+| Items missing in an old modded world | The mod's files weren't present when you prepared |
 
 # Licence and credit
 

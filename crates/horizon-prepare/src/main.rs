@@ -17,7 +17,7 @@ horizon-prepare: prepare Horizon's resources from your own Minecraft Java Editio
 
 Usage: horizon-prepare [--prepare] [--server-jar PATH] [--minecraft-dir PATH] [--prism-dir PATH] [--root PATH] [--output PATH]
                        [--version-json PATH] [--client-jar PATH] [--libraries-dir PATH] [--assets-dir PATH]
-                       [--java-home PATH] [--complete] [--progress json]
+                       [--java-home PATH] [--complete] [--no-sounds] [--progress json]
        horizon-prepare --check [--root PATH] [--output PATH]
        horizon-prepare --launch-api [--root PATH]
        horizon-prepare compile-exporters [--root PATH]
@@ -27,7 +27,8 @@ Usage: horizon-prepare [--prepare] [--server-jar PATH] [--minecraft-dir PATH] [-
        horizon-prepare packs [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
        horizon-prepare languages [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
 
-  --prepare             Import the pinned game files from your own copy first
+  --prepare             Import the pinned game files from your own copy, then copy the sounds
+                        (about 380 MB) from the same place
   --server-jar PATH     The pinned server jar you downloaded yourself
                         (default: HORIZON_SERVER_JAR, or the copy imported before)
   --minecraft-dir PATH  The official launcher's game directory with your installed copy
@@ -52,8 +53,10 @@ Usage: horizon-prepare [--prepare] [--server-jar PATH] [--minecraft-dir PATH] [-
                         stderr when it can't check. Runs no Java and reads no game files; it tests
                         which files are there and their versions, not their contents (on doubt,
                         prepare again)
-  --complete            Also copy the sounds, then fail unless --check would pass: one command
-                        for resources the game plays with nothing missing
+  --complete            Fail unless --check would pass after preparing: one command for resources
+                        the game plays with nothing missing
+  --no-sounds           Leave out the sounds a preparation copies by default (about 380 MB);
+                        the game is silent without them
   --progress json       One JSON object a line on stdout: {\"message\": ...} for each log line,
                         {\"fraction\": F} as the work advances (0 to 1), {\"error\": ...} on failure
   --launch-api          Print what this preparer supports as JSON (the Launch API's version, the
@@ -72,9 +75,11 @@ horizon-prepare packs adds the built-in Programmer Art and High Contrast resourc
 horizon-prepare languages adds the bundled languages and the language list the JAR lacks the same way.
 Full preparation also imports all four after extracting the client JAR's placeholders.
 
-horizon-prepare sounds copies the pinned version's sounds (about 380 MB) from the official
-launcher's asset store into the same folder, checking every file. It is optional: without it the
-game is silent. Nothing is downloaded; it needs the version played once from the official launcher.
+A preparation copies the pinned version's sounds (about 380 MB) from the official launcher's
+asset store too, checking every file, so the game is not silent; --no-sounds leaves them out. A
+sound copy that fails only warns (the game plays silent) unless --complete asks for the check.
+horizon-prepare sounds copies them alone, to repair an older folder. Nothing is downloaded; it
+needs the version played once from the official launcher.
 ";
 
 /// The folder with research-lock.json: beside the executable in a release folder, else the
@@ -105,6 +110,7 @@ fn main() -> ExitCode {
     let mut root = None;
     let mut check = false;
     let mut complete = false;
+    let mut no_sounds = false;
     let mut json = false;
     let mut launch_api = false;
     let mut args = std::env::args_os().skip(1).peekable();
@@ -132,7 +138,7 @@ fn main() -> ExitCode {
             }
         };
         let parsed = match flag.as_str() {
-            "--prepare" | "--server-jar" | "--check" if assets.is_some() => {
+            "--prepare" | "--server-jar" | "--check" | "--no-sounds" if assets.is_some() => {
                 Err(format!("{flag} is for preparing, not for asset copying"))
             }
             "--prepare" if inline.is_none() => {
@@ -159,6 +165,10 @@ fn main() -> ExitCode {
             }
             "--complete" if inline.is_none() && assets.is_none() => {
                 complete = true;
+                Ok(())
+            }
+            "--no-sounds" if inline.is_none() && assets.is_none() => {
+                no_sounds = true;
                 Ok(())
             }
             "--progress" => match value("--progress") {
@@ -214,13 +224,19 @@ fn main() -> ExitCode {
             );
             return ExitCode::from(2);
         }
-        if json || complete {
+        if json || complete || no_sounds {
             eprintln!(
-                "horizon-prepare: error: --progress and --complete apply to preparing; leave them out with --check"
+                "horizon-prepare: error: --progress, --complete and --no-sounds apply to preparing; leave them out with --check"
             );
             return ExitCode::from(2);
         }
         return check_resources(&options);
+    }
+    if complete && no_sounds {
+        eprintln!(
+            "horizon-prepare: error: --complete always copies the sounds; leave out --no-sounds"
+        );
+        return ExitCode::from(2);
     }
     let print = |line: &str| {
         let mut out = std::io::stdout().lock();
@@ -231,8 +247,16 @@ fn main() -> ExitCode {
         true => print(&json_line("message", line)),
         false => print(line),
     };
-    // Preparing is most of a complete run; the sounds and the check are the rest.
-    let scale = if complete { 0.9 } else { 1.0 };
+    // Preparing is most of a run; the sounds are the rest, and --complete checks for gaps after
+    // them. A run that copies the sounds (the default) reports its last fraction once they are in.
+    let with_sounds = !no_sounds;
+    let scale = if complete {
+        0.9
+    } else if with_sounds {
+        0.95
+    } else {
+        1.0
+    };
     let progress = |fraction: f32| {
         if json {
             print(&fraction_line(fraction * scale));
@@ -254,6 +278,7 @@ fn main() -> ExitCode {
         _ => horizon_prepare::prepare_with_progress(&options, &log, &progress).and_then(
             |resources| match complete {
                 true => complete_resources(&options, resources, &log),
+                false if with_sounds => copy_sounds(&options, resources, &log),
                 false => Ok(resources),
             },
         ),
@@ -261,7 +286,7 @@ fn main() -> ExitCode {
     match result {
         Ok(_) => {
             // A plain preparation reported its 1 already.
-            if json && (complete || assets.is_some()) {
+            if json && (complete || with_sounds || assets.is_some()) {
                 print(&fraction_line(1.0));
             }
             ExitCode::SUCCESS
@@ -301,6 +326,31 @@ fn complete_resources(
         "the resources are not complete: {}",
         lacking.join("; ")
     ))
+}
+
+/// Every preparation copies the sounds unless `--no-sounds` says otherwise: one step is easier to
+/// get right than two, and a silent game is a bug report waiting to happen. A copy that fails (no
+/// asset store, no room on disk) only warns: the game plays without sound.
+fn copy_sounds(
+    options: &horizon_prepare::Options,
+    resources: PathBuf,
+    log: horizon_prepare::Log,
+) -> Result<PathBuf, String> {
+    match horizon_prepare::add_assets(
+        "sounds",
+        &options.root,
+        Some(&resources),
+        options.minecraft_dir.as_deref(),
+        &options.inputs,
+        log,
+    ) {
+        Ok(_) => Ok(resources),
+        Err(e) => {
+            log(&format!("sounds were not copied: {e}"));
+            log("the game will play silent; copy them later with: horizon-prepare sounds");
+            Ok(resources)
+        }
+    }
 }
 
 /// `{"key": "text"}` on one line: `--progress json`'s `message` and `error` (docs/api/launch.md).

@@ -46,12 +46,12 @@ Extract the archive and, inside its folder, run the following with your actual p
 
 ```sh
 ./horizon-prepare --prepare --minecraft-dir /path/to/minecraft --server-jar /path/to/server.jar
-./horizon-prepare sounds --minecraft-dir /path/to/minecraft
 ./horizon-client --resources "$PWD/.local/horizon-client/26.3"
 ```
 
-The sounds command copies the sounds from your Minecraft installation's asset store. If that store is
-incomplete, obtain the missing assets through your Minecraft launcher first. Preparation details and alternative
+The preparation copies the sounds from your Minecraft installation's asset store too (`--no-sounds`
+leaves them out). If that store is incomplete, obtain the missing assets through your Minecraft
+launcher first. Preparation details and alternative
 layouts are described below.
 
 Updates are manual: download and extract the next musl archive, prepare its resources, and use that version's
@@ -69,8 +69,8 @@ downloaded yourself; see [Build from source](#run-from-a-checkout)),
 verifies it against the pinned checksums, runs vanilla's data generator and small
 exporters against those jars, and extracts the jar's assets and data into ignored
 `.local/horizon-client/26.3/`. Sounds (about 380 MB) are copied from your
-launcher's asset store by `horizon-prepare sounds`, each file checked against the asset
-index's SHA-1. Preparation also tries to replace the JAR's gray 1×1 title panorama
+launcher's asset store by every preparation (`--no-sounds` skips them), each file checked against the
+asset index's SHA-1; `horizon-prepare sounds` copies them alone. Preparation also tries to replace the JAR's gray 1×1 title panorama
 placeholders with the full textures from that asset store. If the store is missing or
 incomplete, preparation logs a warning and keeps the placeholders. To import the panorama
 later without rerunning the Java exporters, run `horizon-prepare panorama` (or
@@ -94,8 +94,7 @@ before it writes anything, so `--check` reports a folder being prepared, or whos
 stopped, as not current. Resources prepared before the stamp existed report an unknown version
 until they are prepared again. One preparation at a time writes to a folder: each holds
 `.horizon-prepare.lock` in the resources and in the version folder's `.local/`, and a second one
-waits for the first. `--complete` prepares, copies the sounds, and fails unless `--check` would
-then pass: one command for resources with nothing missing. `--progress json` prints one JSON
+waits for the first. `--complete` fails unless `--check` would then pass: one command for resources with nothing missing. `--progress json` prints one JSON
 object a line instead of plain text (its format is part of the Launch API:
 [docs/api/launch.md](api/launch.md#--progress-json)). Exit codes: 0 done, 1 failed or gaps found,
 2 a refused command line.

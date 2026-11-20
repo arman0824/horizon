@@ -71,8 +71,8 @@ horizon-prepare --prepare --server-jar SERVER_JAR --minecraft-dir GAME_DIR \
     --output PREPARED --complete --progress json
 ```
 
-- `--complete` also copies the sounds and fails unless the result would pass `--check`, so the game has
-  nothing missing.
+- Preparing copies the sounds too, so the game has nothing missing; `--no-sounds` leaves them out.
+  `--complete` also fails unless the result would pass `--check`.
 - With `--progress json` every stdout line is one JSON object: `{"message"}` to show, `{"fraction"}` from 0 to 1
   for a progress bar, `{"error"}` as the last line when it fails (exit code 1). stderr is human text.
 - The first preparation takes minutes; later ones skip what is already current. One preparation at a time

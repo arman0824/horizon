@@ -69,8 +69,8 @@ the expected state for a fork until its own app is approved.
 
 ## A fork that signs nobody in
 
-This fork (arman0824/horizon) plays offline and never asks for a Microsoft account: no launcher, no
-sign-in screen, no session hand-off. The reachable sign-in surface of the client was removed:
+This fork (arman0824/horizon) plays offline and never asks for a Microsoft account: no launcher
+sign-in, no sign-in screen, no session hand-off. The reachable sign-in surface of the client was removed:
 
 | Removed | Where it was |
 |---|---|
@@ -83,12 +83,24 @@ server refuses the player, as it would a vanilla client with no account), skins 
 the Minecraft services, the Play with Friends relay. Nothing in the build contacts Mojang, Microsoft or any
 Horizon service; `auth::current()` has no producer, so every online path stays inert.
 
-To build it (Rust 1.90+, Python 3.11+, JDK 25):
+To build and play it (Rust 1.90+, JDK 25; Python 3.9+ for the launcher, 3.11+ for the harnesses):
 
 ```sh
-horizon-prepare --prepare --server-jar ~/Downloads/server.jar   # your own Minecraft 26.3 files
-cargo run --profile fast -p horizon-game
+./tools/launcher.sh    # pick your game files, press Play: builds, prepares (sounds included), plays
 ```
+
+By hand, the launcher is a convenience over:
+
+```sh
+cargo build --profile fast -p horizon-game -p horizon-prepare
+./target/fast/horizon-prepare --prepare --server-jar ~/Downloads/server.jar   # your own files; sounds too
+./target/fast/horizon-client --resources .local/horizon-client/26.3
+```
+
+The game itself contacts nothing. The tools beside it reach Mojang only when asked: `horizon-prepare`
+reads your own files, and `tools/launcher.py` downloads the pinned 26.3 server jar (and, when a
+third-party launcher rewrote the version file, Mojang's own `26.3.json`), refusing anything whose
+SHA-1 differs from `research-lock.json`. Neither signs anyone in.
 
 `tools/test_online_mode_parity.py` (online-mode joins through a mock session service) cannot pass here and
 is not run by this fork: it needs the session hand-off above.
