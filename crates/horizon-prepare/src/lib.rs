@@ -542,6 +542,7 @@ impl Run<'_> {
             return worker.as_mut().unwrap().run(main, args, log_path);
         }
         let separator = if cfg!(windows) { ";" } else { ":" };
+        let heap = java::heap(heap);
         let mut all = vec![
             format!("-Xmx{heap}"),
             "-cp".into(),

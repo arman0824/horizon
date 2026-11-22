@@ -28,6 +28,16 @@ pub(crate) const BATCH_OPTIONS: [&str; 2] = ["-XX:TieredStopAtLevel=1", "-XX:+Us
 /// selected" (#10067).
 const JVM_OPTION_VARS: [&str; 3] = ["JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS"];
 
+/// The most heap one step may ask the JVM for. `HORIZON_PREPARE_HEAP` replaces the step's own
+/// value: the launcher's low-memory mode sets 1G, so a step that outgrows it fails with Java's
+/// OutOfMemoryError in the log instead of taking a 4 GB machine's session down.
+pub(crate) fn heap(default: &str) -> String {
+    std::env::var("HORIZON_PREPARE_HEAP")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
 /// Exporters and JDK probes write to pipes or log files: on Windows they open no terminal. They
 /// run with [`BATCH_OPTIONS`] alone, whatever options the player's environment sets for Java.
 pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
@@ -497,6 +507,18 @@ mod tests {
             "java failed (-1)"
         );
         fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn the_heap_override_replaces_each_steps_value() {
+        // SAFETY: this test is the only one in the binary that reads or writes the variable.
+        unsafe { std::env::set_var("HORIZON_PREPARE_HEAP", "1G") };
+        assert_eq!(heap("2G"), "1G");
+        assert_eq!(heap("4G"), "1G");
+        unsafe { std::env::set_var("HORIZON_PREPARE_HEAP", " ") };
+        assert_eq!(heap("2G"), "2G");
+        unsafe { std::env::remove_var("HORIZON_PREPARE_HEAP") };
+        assert_eq!(heap("2G"), "2G");
     }
 
     #[test]

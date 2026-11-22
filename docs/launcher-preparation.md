@@ -59,6 +59,11 @@ the other lanes would leave processors idle. On a 6-core laptop they finished ~2
 server lane; the split itself is not yet timed on such a machine (on 3 cores it is slower,
 44.9 s against 40.5 s, so it stays off there). The release check prepares both ways.
 
+`HORIZON_PREPARE_HEAP` replaces the maximum heap each exporter step asks for (the workers' 2G,
+the separate steps' 1G): the launcher's low-memory mode sets `1G`, so a step that outgrows a 4 GB
+machine reports Java's `OutOfMemoryError` in the preparation log instead of the kernel or
+systemd-oomd killing the session around it.
+
 Every JVM preparing starts (javac too, through `-J`) runs with `-XX:TieredStopAtLevel=1
 -XX:+UseSerialGC`: short batch jobs side by side lose more CPU to the C2 compiler than it wins
 back, and the serial collector keeps their heaps small (fresh: 105 s before, 63–66 s after,

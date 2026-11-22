@@ -91,6 +91,13 @@ To build and play it (Rust 1.90+, JDK 25; Python 3.9+ for the launcher, 3.11+ fo
 
 The build uses at most 8 parallel compiler jobs (`HORIZON_BUILD_JOBS=4 ./tools/launcher.sh` lowers
 it) so a first build is less likely to be killed for memory; its log is `.local/logs/build-*.log`.
+On a 4–8 GB machine, tick **Low-memory device** in the launcher: it builds with one job, one
+front-end thread and `opt-level = 1` (`-Zthreads=1`, `-j1`), turns off incremental compilation, and
+warns when the swap a first build needs is missing. Preparation runs one worker
+(`HORIZON_PREPARE_JOBS=1`) and caps every exporter JVM at 1 GB (`HORIZON_PREPARE_HEAP=1G`), so a
+step that outgrows the machine reports Java's OutOfMemoryError in the log instead of the session
+being killed. The setting is remembered, and `./tools/launcher.sh --low-memory` does the same from a
+terminal.
 
 By hand, the launcher is a convenience over:
 

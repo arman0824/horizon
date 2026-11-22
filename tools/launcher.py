@@ -336,8 +336,10 @@ def total_memory_gb() -> float | None:
     return None
 
 
-def build_jobs() -> int:
+def build_jobs(low_memory: bool = False) -> int:
     """Cargo's parallel jobs: more speed, but each rustc can take a gigabyte or two."""
+    if low_memory:
+        return 1
     value = os.environ.get("HORIZON_BUILD_JOBS", "").strip()
     if value:
         try:
@@ -351,7 +353,57 @@ def build_jobs() -> int:
     return max(1, min(cores, cap))
 
 
-def build_command() -> list[str]:
+def swap_gb() -> float | None:
+    """Total swap the kernel reports, or None where it cannot be read."""
+    try:
+        if os.name != "nt" and sys.platform != "darwin":
+            with open("/proc/meminfo", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("SwapTotal:"):
+                        return int(line.split()[1]) * 1024 / 1e9
+    except Exception:
+        return None
+    return None
+
+
+def low_memory_environment() -> dict[str, str]:
+    """Compiler settings that trade speed for peak memory, for a 4–8 GB machine."""
+    existing = os.environ.get("RUSTFLAGS", "").strip()
+    threads = "-Zthreads=1"
+    # Keep any flags the caller set for other reasons, but never the repo's eight front-end threads.
+    kept = " ".join(
+        token for token in existing.split() if not token.startswith("-Zthreads")
+    )
+    return {
+        "HORIZON_BUILD_JOBS": "1",
+        "RUSTFLAGS": f"{threads} {kept}".strip(),
+        # opt-level 1 is the big one: LLVM's optimiser is what grows with opt-level 3.
+        "CARGO_PROFILE_FAST_OPT_LEVEL": "1",
+        # No incremental cache competing for memory during a one-off first build.
+        "CARGO_PROFILE_FAST_INCREMENTAL": "false",
+    }
+
+
+def low_memory_notes() -> str:
+    """What a low-memory build assumes, including the swap a 4 GB machine needs."""
+    memory = total_memory_gb()
+    parts = []
+    if memory is not None:
+        parts.append(f"{memory:.1f} GB RAM detected")
+    swap = swap_gb()
+    if sys.platform == "linux":
+        if swap is None or swap < 4:
+            parts.append(
+                "a build this size wants 16 GB of swap on a 4 GB machine; no swap was found"
+                if not swap
+                else f"only {swap:.1f} GB of swap; 16 GB is safer"
+            )
+        else:
+            parts.append(f"{swap:.1f} GB swap")
+    return "; ".join(parts)
+
+
+def build_command(low_memory: bool = False) -> list[str]:
     cargo = os.environ.get("CARGO") or str(Path.home() / ".cargo" / "bin" / "cargo")
     if not Path(cargo).is_file():
         cargo = "cargo"
@@ -361,7 +413,7 @@ def build_command() -> list[str]:
         "--profile",
         "fast",
         "--jobs",
-        str(build_jobs()),
+        str(build_jobs(low_memory)),
         "-p",
         "horizon-game",
         "-p",
@@ -407,6 +459,8 @@ def self_test(as_json: bool = False) -> int:
         "minecraft": None if not detected else {"kind": detected[0], "path": str(detected[1])},
         "server_jar": None if not jar else {"path": str(jar), "sha1": sha1(jar)},
         "game_dir": str(settings_game_dir()),
+        "memory_gb": total_memory_gb(),
+        "swap_gb": swap_gb(),
         "tk": tk is not None,
         "tk_version": None if tk is None else str(tk.TkVersion),
     }
@@ -418,6 +472,11 @@ def self_test(as_json: bool = False) -> int:
             print(f"tkinter          yes ({setup['tk_version']})")
         else:
             print("tkinter          NO — the window cannot open; run tools/launcher.sh")
+        if setup["memory_gb"] is not None:
+            memory = f"{setup['memory_gb']:.1f} GB"
+            if setup["swap_gb"]:
+                memory += f", {setup['swap_gb']:.1f} GB swap"
+            print(f"memory           {memory}")
         print(f"checkout         {setup['root']}")
         print(
             f"minecraft {version}   "
@@ -470,6 +529,9 @@ class App:
         self.jar_var = tk.StringVar(value=jar)
         self.game_var = tk.StringVar(value=game_dir)
         self.sounds_var = tk.BooleanVar(value=bool(self.settings.get("sounds", True)))
+        memory = total_memory_gb()
+        low_memory_default = bool(self.settings.get("low_memory", memory is not None and memory < 8))
+        self.low_memory_var = tk.BooleanVar(value=low_memory_default)
         self.extra_var = tk.StringVar(value=str(self.settings.get("extra_args", "")))
         self.status_var = tk.StringVar(value="")
         self.detail_var = tk.StringVar(value="")
@@ -535,9 +597,15 @@ class App:
         options.grid(row=5, column=0, columnspan=4, sticky="we", pady=(6, 2))
         ttk.Checkbutton(
             options,
-            text="Copy the sounds too (about 380 MB, taken from your Minecraft files)",
+            text="Copy the sounds (about 380 MB)",
             variable=self.sounds_var,
         ).pack(side="left")
+        ttk.Checkbutton(
+            options,
+            text="Low-memory device (4–8 GB): one compiler job",
+            variable=self.low_memory_var,
+            command=self.refresh,
+        ).pack(side="left", padx=(18, 0))
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=6, column=0, columnspan=4, sticky="we", pady=(10, 4))
@@ -679,6 +747,8 @@ class App:
             status = "Ready — press Play."
         self.status_var.set(status)
         detail = f"Minecraft {self.version}"
+        if self.low_memory_var.get():
+            detail += " · low-memory build"
         if gaps and built:
             detail += f" · {len(gaps)} thing(s) to prepare"
         if not self.minecraft_var.get().strip():
@@ -721,7 +791,12 @@ class App:
             self.stop_button.configure(state="normal" if running else "disabled")
 
     def run_process(
-        self, command: list[str], done=None, label: str | None = None, logfile: Path | None = None
+        self,
+        command: list[str],
+        done=None,
+        label: str | None = None,
+        logfile: Path | None = None,
+        env_extra: dict[str, str] | None = None,
     ) -> None:
         if self.busy:
             self.write("Another step is still running; wait for it to finish.", "quiet")
@@ -747,6 +822,8 @@ class App:
                 environment["PATH"] = (
                     str(Path.home() / ".cargo" / "bin") + os.pathsep + environment.get("PATH", "")
                 )
+                if env_extra:
+                    environment.update(env_extra)
                 process = subprocess.Popen(
                     command,
                     cwd=str(ROOT),
@@ -877,11 +954,22 @@ class App:
             self.write("The game is already running.")
             return
         if not runnable(GAME_BIN) or not runnable(PREPARE_BIN):
+            low = bool(self.low_memory_var.get())
+            memory = total_memory_gb()
+            if low:
+                extra = (
+                    "\n\nThis machine has "
+                    + (f"{memory:.0f} GB RAM. " if memory is not None else "")
+                    + "The low-memory build uses one compiler job and one thread, so it can take "
+                    "a few hours on 4 GB. Keep the window open and close other apps."
+                )
+            else:
+                extra = ""
             if not self.confirm(
                 "Build the game",
                 "Horizon is not built yet. Build it now?\n\n"
                 "Compiling the game takes a few minutes the first time; the window stays open and "
-                "shows the build's progress. It happens once.",
+                "shows the build's progress. It happens once." + extra,
             ):
                 return
             self.build(then=lambda code: code == 0 and self.play())
@@ -933,11 +1021,46 @@ class App:
             if then:
                 then(code)
 
-        self.run_process(prepare_command(minecraft, jar, sounds), done, "preparing")
+        low_memory = bool(self.low_memory_var.get())
+        if low_memory:
+            self.write(
+                "Low-memory preparation: one worker thread and a 1 GB Java heap per step, so the "
+                "exporters cannot grow past what this machine has. Copying the sounds still "
+                "takes a while; the window stays open.",
+                "quiet",
+            )
+        self.run_process(
+            prepare_command(minecraft, jar, sounds),
+            done,
+            "preparing",
+            env_extra=(
+                {"HORIZON_PREPARE_JOBS": "1", "HORIZON_PREPARE_HEAP": "1G"}
+                if low_memory
+                else None
+            ),
+        )
 
     def build(self, then=None) -> None:
+        low_memory = bool(self.low_memory_var.get())
         stamp = time.strftime("%Y%m%d-%H%M%S")
         logfile = logs_dir() / f"build-{stamp}.log"
+        if low_memory:
+            self.write(
+                "Low-memory build: one compiler job, one front-end thread, opt-level 1. "
+                + low_memory_notes()
+                + ". The game itself runs a little slower than a normal build; that is the "
+                "trade for finishing on this machine.",
+                "quiet",
+            )
+            if sys.platform == "linux" and (swap_gb() or 0) < 4:
+                self.write(
+                    "A first build on 4 GB needs disk swap. If it is missing, run once in a "
+                    "terminal:\n"
+                    "    sudo fallocate -l 16G /swapfile && sudo chmod 600 /swapfile && "
+                    "sudo mkswap /swapfile && sudo swapon /swapfile\n"
+                    "The build will take a while; keep the window open.",
+                    "quiet",
+                )
 
         def done(code: int) -> None:
             killed = code < 0 or code == 137 or any(
@@ -945,11 +1068,21 @@ class App:
                 for line in self.last_lines
                 for marker in ("signal: 9", "sigkill", "killed")
             )
-            if killed:
+            if killed and low_memory:
+                self.write(
+                    "The low-memory build was still killed. It is already using one job and one "
+                    "thread, so the machine has no room left: close every other app, add the "
+                    "16 GB swap file above if you have not, and run it again.\n"
+                    f"The full build log is {logfile}. A machine with 8 GB or more builds this "
+                    "in a fraction of the time.",
+                    "error",
+                )
+            elif killed:
                 self.write(
                     "The build was killed. On a first build that is usually the system running "
                     "out of memory: close other apps, then try again with fewer parallel jobs:\n"
                     f"    HORIZON_BUILD_JOBS=4 ./tools/launcher.sh\n"
+                    f"or tick \"Low-memory device\" in the launcher.\n"
                     f"The full build log is {logfile}",
                     "error",
                 )
@@ -958,7 +1091,13 @@ class App:
             if then:
                 then(code)
 
-        self.run_process(build_command(), done, "building", logfile)
+        self.run_process(
+            build_command(low_memory),
+            done,
+            "building",
+            logfile,
+            low_memory_environment() if low_memory else None,
+        )
 
     def download(self, then=None) -> None:
         result: dict[str, Path] = {}
@@ -1095,6 +1234,7 @@ class App:
                 "server_jar": self.jar_var.get().strip(),
                 "game_dir": self.game_var.get().strip(),
                 "sounds": bool(self.sounds_var.get()),
+                "low_memory": bool(self.low_memory_var.get()),
                 "extra_args": self.extra_var.get().strip(),
             }
         )
@@ -1142,6 +1282,11 @@ def terminate(process: subprocess.Popen) -> None:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Horizon's offline launcher")
     parser.add_argument("--self-test", action="store_true", help="check the setup and exit")
+    parser.add_argument(
+        "--low-memory",
+        action="store_true",
+        help="for a 4-8 GB machine: one compiler job, a 1 GB Java heap while preparing",
+    )
     parser.add_argument("--json", action="store_true", help="with --self-test: print JSON")
     parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--smoke-prepare", action="store_true", help=argparse.SUPPRESS)
@@ -1171,6 +1316,9 @@ def main(argv: list[str]) -> int:
         root,
         automatic=args.smoke_test or args.smoke_prepare or args.smoke_play or args.smoke_build,
     )
+    if args.low_memory:
+        app.low_memory_var.set(True)
+        app.refresh()
 
     if args.smoke_prepare:
         state = {"started": False}

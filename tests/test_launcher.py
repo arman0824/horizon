@@ -103,15 +103,34 @@ class BuildTest(unittest.TestCase):
                 mock.patch.object(launcher.os, "cpu_count", lambda: 16):
             self.assertEqual(launcher.build_jobs(), 4)
 
+    def test_the_low_memory_build_uses_one_job(self):
+        with mock.patch.dict("os.environ", {"HORIZON_BUILD_JOBS": "8"}):
+            self.assertEqual(launcher.build_jobs(low_memory=True), 1)
+            command = launcher.build_command(low_memory=True)
+            self.assertEqual(command[command.index("--jobs") + 1], "1")
+
+    def test_the_low_memory_environment_cuts_compiler_memory(self):
+        with mock.patch.dict("os.environ", {"RUSTFLAGS": "-Zthreads=8 -C target-cpu=native"}):
+            env = launcher.low_memory_environment()
+        self.assertEqual(env["HORIZON_BUILD_JOBS"], "1")
+        self.assertIn("-Zthreads=1", env["RUSTFLAGS"])
+        self.assertNotIn("-Zthreads=8", env["RUSTFLAGS"])
+        self.assertIn("-C target-cpu=native", env["RUSTFLAGS"])
+        self.assertEqual(env["CARGO_PROFILE_FAST_OPT_LEVEL"], "1")
+        self.assertEqual(env["CARGO_PROFILE_FAST_INCREMENTAL"], "false")
+
 
 class SettingsTest(unittest.TestCase):
     def test_settings_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             with mock.patch.object(launcher, "settings_path", lambda: path):
-                launcher.save_settings({"sounds": False, "game_dir": "/tmp/w", "extra_args": "x"})
+                launcher.save_settings(
+                    {"sounds": False, "low_memory": True, "game_dir": "/tmp/w", "extra_args": "x"}
+                )
                 loaded = launcher.load_settings()
             self.assertEqual(loaded["sounds"], False)
+            self.assertEqual(loaded["low_memory"], True)
             self.assertEqual(loaded["game_dir"], "/tmp/w")
             self.assertEqual(loaded["extra_args"], "x")
 
