@@ -77,6 +77,33 @@ class CommandTest(unittest.TestCase):
         self.assertFalse(launcher.needs_version_json(["nothing relevant here"]))
 
 
+class BuildTest(unittest.TestCase):
+    def test_the_build_caps_parallel_jobs_for_memory(self):
+        command = launcher.build_command()
+        self.assertIn("--jobs", command)
+        jobs = int(command[command.index("--jobs") + 1])
+        self.assertGreaterEqual(jobs, 1)
+        self.assertLessEqual(jobs, 8)
+        self.assertIn("horizon-game", command)
+        self.assertIn("horizon-prepare", command)
+
+    def test_the_build_jobs_can_be_lowered(self):
+        with mock.patch.dict("os.environ", {"HORIZON_BUILD_JOBS": "3"}):
+            self.assertEqual(launcher.build_jobs(), 3)
+            command = launcher.build_command()
+            self.assertEqual(command[command.index("--jobs") + 1], "3")
+
+    def test_a_bad_build_jobs_value_falls_back(self):
+        with mock.patch.dict("os.environ", {"HORIZON_BUILD_JOBS": "nonsense"}):
+            self.assertGreaterEqual(launcher.build_jobs(), 1)
+
+    def test_a_small_machine_builds_with_fewer_jobs(self):
+        with mock.patch.dict("os.environ", {"HORIZON_BUILD_JOBS": ""}), \
+                mock.patch.object(launcher, "total_memory_gb", lambda: 8.0), \
+                mock.patch.object(launcher.os, "cpu_count", lambda: 16):
+            self.assertEqual(launcher.build_jobs(), 4)
+
+
 class SettingsTest(unittest.TestCase):
     def test_settings_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:

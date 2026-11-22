@@ -320,11 +320,57 @@ def game_command(game_dir: Path, extra: list[str] | None = None) -> list[str]:
     return command + list(extra or [])
 
 
+def total_memory_gb() -> float | None:
+    """Physical memory, or None when it cannot be read."""
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True, timeout=5)
+            return int(out.strip()) / 1e9
+        if os.name != "nt":
+            with open("/proc/meminfo", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        return int(line.split()[1]) * 1024 / 1e9
+    except Exception:
+        return None
+    return None
+
+
+def build_jobs() -> int:
+    """Cargo's parallel jobs: more speed, but each rustc can take a gigabyte or two."""
+    value = os.environ.get("HORIZON_BUILD_JOBS", "").strip()
+    if value:
+        try:
+            return max(1, int(value))
+        except ValueError:
+            pass
+    cores = os.cpu_count() or 4
+    memory = total_memory_gb()
+    # A first build on a small machine is what gets killed for memory; keep it modest there.
+    cap = 4 if memory is not None and memory < 12 else 8
+    return max(1, min(cores, cap))
+
+
 def build_command() -> list[str]:
     cargo = os.environ.get("CARGO") or str(Path.home() / ".cargo" / "bin" / "cargo")
     if not Path(cargo).is_file():
         cargo = "cargo"
-    return [cargo, "build", "--profile", "fast", "-p", "horizon-game", "-p", "horizon-prepare"]
+    return [
+        cargo,
+        "build",
+        "--profile",
+        "fast",
+        "--jobs",
+        str(build_jobs()),
+        "-p",
+        "horizon-game",
+        "-p",
+        "horizon-prepare",
+    ]
+
+
+def logs_dir() -> Path:
+    return ROOT / ".local" / "logs"
 
 
 def split_extra_arguments(text: str) -> list[str]:
@@ -674,7 +720,9 @@ class App:
             running = self.game is not None and self.game.poll() is None
             self.stop_button.configure(state="normal" if running else "disabled")
 
-    def run_process(self, command: list[str], done=None, label: str | None = None) -> None:
+    def run_process(
+        self, command: list[str], done=None, label: str | None = None, logfile: Path | None = None
+    ) -> None:
         if self.busy:
             self.write("Another step is still running; wait for it to finish.", "quiet")
             return
@@ -683,8 +731,16 @@ class App:
         self.set_busy(label or "working")
         self.progress["value"] = 0.0
         self.write("$ " + " ".join(command), "quiet")
+        if logfile is not None:
+            try:
+                logfile.parent.mkdir(parents=True, exist_ok=True)
+                logfile.write_text("")
+                self.write(f"Output is also saved to {logfile}", "quiet")
+            except OSError:
+                logfile = None
 
         def work() -> None:
+            nonlocal logfile
             code = 127
             try:
                 environment = dict(os.environ)
@@ -707,7 +763,14 @@ class App:
                     terminate(process)
                 assert process.stdout is not None
                 for line in process.stdout:
-                    self.queue.put(("line", ANSI.sub("", line.rstrip("\n"))))
+                    clean = ANSI.sub("", line.rstrip("\n"))
+                    if logfile is not None:
+                        try:
+                            with open(logfile, "a", encoding="utf-8") as out:
+                                out.write(clean + "\n")
+                        except OSError:
+                            logfile = None
+                    self.queue.put(("line", clean))
                 code = process.wait()
             except FileNotFoundError:
                 self.queue.put(("line", f"{command[0]} was not found on this machine"))
@@ -873,7 +936,29 @@ class App:
         self.run_process(prepare_command(minecraft, jar, sounds), done, "preparing")
 
     def build(self, then=None) -> None:
-        self.run_process(build_command(), then, "building")
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        logfile = logs_dir() / f"build-{stamp}.log"
+
+        def done(code: int) -> None:
+            killed = code < 0 or code == 137 or any(
+                marker in line.lower()
+                for line in self.last_lines
+                for marker in ("signal: 9", "sigkill", "killed")
+            )
+            if killed:
+                self.write(
+                    "The build was killed. On a first build that is usually the system running "
+                    "out of memory: close other apps, then try again with fewer parallel jobs:\n"
+                    f"    HORIZON_BUILD_JOBS=4 ./tools/launcher.sh\n"
+                    f"The full build log is {logfile}",
+                    "error",
+                )
+            elif code != 0:
+                self.write(f"The build failed. The full build log is {logfile}", "error")
+            if then:
+                then(code)
+
+        self.run_process(build_command(), done, "building", logfile)
 
     def download(self, then=None) -> None:
         result: dict[str, Path] = {}
@@ -1061,6 +1146,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--smoke-prepare", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--smoke-play", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--smoke-build", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.self_test:
         return self_test(args.json)
@@ -1081,7 +1167,10 @@ def main(argv: list[str]) -> int:
         root.tk.call("tk", "scaling", 1.15)
     except Exception:
         pass
-    app = App(root, automatic=args.smoke_test or args.smoke_prepare or args.smoke_play)
+    app = App(
+        root,
+        automatic=args.smoke_test or args.smoke_prepare or args.smoke_play or args.smoke_build,
+    )
 
     if args.smoke_prepare:
         state = {"started": False}
@@ -1099,6 +1188,23 @@ def main(argv: list[str]) -> int:
             root.after(200, prepare_tick)
 
         root.after(400, prepare_tick)
+    elif args.smoke_build:
+        state = {"started": False}
+
+        def build_tick() -> None:
+            if not state["started"]:
+                if not app.busy:
+                    state["started"] = True
+                    app.build()
+            elif not app.busy:
+                logs = sorted(logs_dir().glob("build-*.log"))
+                where = logs[-1] if logs else "none"
+                print(f"build finished; status: {app.status_var.get()}; log: {where}")
+                root.destroy()
+                return
+            root.after(300, build_tick)
+
+        root.after(400, build_tick)
     elif args.smoke_play:
         import tempfile
 

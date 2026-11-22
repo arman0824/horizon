@@ -180,6 +180,7 @@ Full details: [docs/forking.md](docs/forking.md) · upstream project:
 | `prepared game files are missing` | Press **Play** (it prepares), or run the terminal block above |
 | `--session-file: unknown option` | Expected — this fork signs nobody in |
 | A server refuses you with `invalidSession` | It is in online mode; this fork cannot join it |
+| The first build is killed, or the terminal says `/bin/fish crashed` / `Killed` | The system ran out of memory while compiling. Close other apps and retry with fewer parallel jobs: `HORIZON_BUILD_JOBS=4 ./tools/launcher.sh`. The launcher keeps the full log in `.local/logs/build-*.log`. |
 | The game is quiet | `--prepare` copies the sounds by default, so this is usually an old prepared folder: run `./target/fast/horizon-prepare sounds` **from the repo root** (it writes into the folder `--resources` names). No `Horizon: audio output …` line in `logs/latest.log` means the OS never gave the game a device. |
 | Items missing in an old modded world | The mod's files weren't present when you prepared |
 

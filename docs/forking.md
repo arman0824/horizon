@@ -89,6 +89,9 @@ To build and play it (Rust 1.90+, JDK 25; Python 3.9+ for the launcher, 3.11+ fo
 ./tools/launcher.sh    # pick your game files, press Play: builds, prepares (sounds included), plays
 ```
 
+The build uses at most 8 parallel compiler jobs (`HORIZON_BUILD_JOBS=4 ./tools/launcher.sh` lowers
+it) so a first build is less likely to be killed for memory; its log is `.local/logs/build-*.log`.
+
 By hand, the launcher is a convenience over:
 
 ```sh
