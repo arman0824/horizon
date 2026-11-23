@@ -1,4 +1,7 @@
+import io
 import json
+import os
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -118,6 +121,89 @@ class BuildTest(unittest.TestCase):
         self.assertIn("-C target-cpu=native", env["RUSTFLAGS"])
         self.assertEqual(env["CARGO_PROFILE_FAST_OPT_LEVEL"], "1")
         self.assertEqual(env["CARGO_PROFILE_FAST_INCREMENTAL"], "false")
+
+
+class PrebuiltTest(unittest.TestCase):
+    def test_the_asset_is_the_linux_build(self):
+        with mock.patch.object(launcher.sys, "platform", "linux"), \
+                mock.patch.object(launcher.platform, "machine", lambda: "x86_64"):
+            self.assertEqual(launcher.prebuilt_asset(), launcher.PREBUILT_ASSET)
+        with mock.patch.object(launcher.sys, "platform", "darwin"), \
+                mock.patch.object(launcher.platform, "machine", lambda: "arm64"):
+            self.assertIsNone(launcher.prebuilt_asset())
+
+    def test_the_checksum_comes_from_the_sums_file(self):
+        digest = "a" * 64
+        sums = f"{'b' * 64}  other.tar.gz\n{digest}  *{launcher.PREBUILT_ASSET}\n"
+        self.assertEqual(launcher.checksum_for(sums, launcher.PREBUILT_ASSET), digest)
+        with self.assertRaises(ValueError):
+            launcher.checksum_for(sums, "missing.tar.gz")
+        with self.assertRaises(ValueError):
+            launcher.checksum_for(f"not-a-checksum  {launcher.PREBUILT_ASSET}", launcher.PREBUILT_ASSET)
+
+    def test_installing_takes_the_binaries_and_nothing_else(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            archive = self.archive(
+                tmp,
+                {
+                    "horizon-linux-x86_64/target/fast/horizon-client": b"game",
+                    "horizon-linux-x86_64/target/fast/horizon-prepare": b"prepare",
+                    "horizon-linux-x86_64/target/fast/horizon-ctl": b"ctl",
+                    "horizon-linux-x86_64/README.md": b"readme",
+                },
+            )
+            root = tmp / "root"
+            installed = launcher.install_prebuilt(archive, root)
+            self.assertEqual(
+                {path.name for path in installed},
+                {"horizon-client", "horizon-prepare", "horizon-ctl"},
+            )
+            binary = root / "target" / "fast" / "horizon-client"
+            self.assertEqual(binary.read_bytes(), b"game")
+            self.assertTrue(os.access(binary, os.X_OK))
+            self.assertFalse((root / "target" / "fast" / "README.md").exists())
+
+    def test_an_archive_with_a_path_outside_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            archive = self.archive(
+                tmp,
+                {
+                    "../escaped": b"no",
+                    "horizon-linux-x86_64/target/fast/horizon-client": b"game",
+                    "horizon-linux-x86_64/target/fast/horizon-prepare": b"prepare",
+                },
+            )
+            with self.assertRaises(ValueError):
+                launcher.install_prebuilt(archive, tmp / "root")
+            self.assertFalse((tmp / "escaped").exists())
+
+    def test_a_partial_archive_leaves_the_installed_game_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            archive = self.archive(
+                tmp, {"horizon-linux-x86_64/target/fast/horizon-prepare": b"prepare"}
+            )
+            fast = tmp / "root" / "target" / "fast"
+            fast.mkdir(parents=True)
+            (fast / "horizon-client").write_bytes(b"old")
+            with self.assertRaises(ValueError):
+                launcher.install_prebuilt(archive, tmp / "root")
+            self.assertEqual((fast / "horizon-client").read_bytes(), b"old")
+            self.assertFalse((fast / "horizon-prepare").exists())
+            self.assertEqual(list(fast.glob("*.part")), [])
+
+    @staticmethod
+    def archive(directory: Path, entries: dict[str, bytes]) -> Path:
+        path = directory / "release.tar.gz"
+        with tarfile.open(path, "w:gz") as tar:
+            for name, data in entries.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                info.mode = 0o644
+                tar.addfile(info, io.BytesIO(data))
+        return path
 
 
 class SettingsTest(unittest.TestCase):

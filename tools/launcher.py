@@ -7,6 +7,7 @@ are part of preparing), then start it — with no account and no sign-in anywher
 
     tools/launcher.sh                       the window (finds a Python that has Tk)
     python3 tools/launcher.py --self-test   what it found, without a window
+    python3 tools/launcher.py --download-prebuilt   install the release's programs, no build
 
 Everything it downloads is checked against the SHA-1 pinned in research-lock.json. Resources
 always live in this checkout (`.local/horizon-client/<version>`); the "Worlds & settings"
@@ -24,14 +25,18 @@ import hashlib
 import json
 import os
 import queue
+import platform
 import re
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections import deque
 from pathlib import Path
@@ -53,6 +58,13 @@ RESOURCES_MARK = "horizon-resources.json"
 SOUNDS_MARK = "assets/minecraft/sounds.json"
 VERSION_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+# The fork's own release: prebuilt programs for machines that should not compile Horizon.
+RELEASE_REPO = "arman0824/horizon"
+PREBUILT_ASSET = "horizon-linux-x86_64.tar.gz"
+SHA256SUMS_ASSET = "SHA256SUMS"
+PREBUILT_BINARIES = ("horizon-client", "horizon-prepare", "horizon-ctl")
+USER_AGENT = "horizon-launcher"
 
 
 # --------------------------------------------------------------------------- what is here
@@ -437,6 +449,140 @@ def split_extra_arguments(text: str) -> list[str]:
 # --------------------------------------------------------------------------- self-test
 
 
+def prebuilt_asset() -> str | None:
+    """The release asset for this machine, or None where the fork publishes none."""
+    machine = platform.machine().lower()
+    if sys.platform.startswith("linux") and machine in ("x86_64", "amd64"):
+        return PREBUILT_ASSET
+    return None
+
+
+def checksum_for(sums: str, name: str) -> str:
+    """The SHA-256 a `sha256sum` file gives `name`; a missing or malformed line is an error."""
+    for line in sums.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].lstrip("*") == name:
+            value = parts[0].lower()
+            if re.fullmatch(r"[0-9a-f]{64}", value):
+                return value
+            break
+    raise ValueError(f"{name} is not in {SHA256SUMS_ASSET}")
+
+
+def fetch_json(url: str, timeout: int = 60):
+    request = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(
+            f"{url} answered {error.code} {error.reason}. GitHub limits anonymous lookups; "
+            "wait a minute, or download the archive from the release page by hand."
+        ) from error
+
+
+def install_prebuilt(archive: Path, root: Path = ROOT) -> list[Path]:
+    """Copy a release archive's programs into root/target/fast, where the launcher looks.
+
+    Only the named binaries are taken; an archive with a path outside it, or without the game
+    and the preparer, is refused.
+    """
+    dest = root / "target" / "fast"
+    dest.mkdir(parents=True, exist_ok=True)
+    partials: dict[str, Path] = {}
+    try:
+        with tarfile.open(archive, "r:*") as tar:
+            for member in tar.getmembers():
+                parts = Path(member.name).parts
+                if member.name.startswith("/") or ".." in parts:
+                    raise ValueError(f"{archive.name} holds an unsafe path: {member.name}")
+                if not member.isfile() or parts[-3:-1] != ("target", "fast"):
+                    continue
+                name = parts[-1]
+                if name not in PREBUILT_BINARIES:
+                    continue
+                source = tar.extractfile(member)
+                if source is None:
+                    continue
+                partial = dest / f"{name}.part"
+                with open(partial, "wb") as out:
+                    shutil.copyfileobj(source, out)
+                os.chmod(partial, 0o755)
+                partials[name] = partial
+        missing = [name for name in ("horizon-client", "horizon-prepare") if name not in partials]
+        if missing:
+            raise ValueError(f"{archive.name} has no {', '.join(missing)}")
+    except BaseException:
+        for partial in partials.values():
+            partial.unlink(missing_ok=True)
+        raise
+    # All present: only now do the installed programs change, so a bad archive leaves the
+    # previous ones in place.
+    installed = []
+    for name, partial in partials.items():
+        os.replace(partial, dest / name)
+        installed.append(dest / name)
+    return installed
+
+
+def download_prebuilt(log=print, repo: str = RELEASE_REPO) -> int:
+    """Fetch the latest release's archive, check its SHA-256 and install the programs."""
+    asset = prebuilt_asset()
+    if asset is None:
+        log(
+            "No prebuilt build is published for this machine: the fork ships Linux x86_64 "
+            "programs. Build from source here instead (Play does it)."
+        )
+        return 1
+    log(f"Finding {asset} in the latest release of {repo}…")
+    release = fetch_json(f"https://api.github.com/repos/{repo}/releases/latest")
+    assets = {item.get("name"): item for item in release.get("assets", [])}
+    for name in (asset, SHA256SUMS_ASSET):
+        if name not in assets:
+            raise RuntimeError(
+                f"The latest release of {repo} has no {name}; it holds: "
+                + (", ".join(sorted(assets)) or "no assets")
+            )
+    sums_request = urllib.request.Request(
+        assets[SHA256SUMS_ASSET]["browser_download_url"], headers={"User-Agent": USER_AGENT}
+    )
+    with urllib.request.urlopen(sums_request, timeout=60) as response:
+        sums = response.read().decode("utf-8", "replace")
+    want = checksum_for(sums, asset)
+
+    with tempfile.TemporaryDirectory(prefix="horizon-prebuilt-") as scratch:
+        archive = Path(scratch) / asset
+        size = int(assets[asset].get("size") or 0)
+        log(f"Downloading {asset}" + (f" ({size / 1e6:.0f} MB)" if size else "") + "…")
+        request = urllib.request.Request(
+            assets[asset]["browser_download_url"], headers={"User-Agent": USER_AGENT}
+        )
+        digest = hashlib.sha256()
+        with urllib.request.urlopen(request, timeout=300) as response, open(archive, "wb") as out:
+            total = int(response.headers.get("Content-Length") or size)
+            done = 0
+            tenth = -1
+            while chunk := response.read(1 << 20):
+                out.write(chunk)
+                digest.update(chunk)
+                done += len(chunk)
+                if total and done * 10 // total > tenth:
+                    tenth = done * 10 // total
+                    log(f"  {min(tenth, 10) * 10}%")
+        got = digest.hexdigest()
+        if got != want:
+            raise RuntimeError(
+                f"{asset} does not match {SHA256SUMS_ASSET}: expected {want}, got {got}. "
+                "Nothing was installed."
+            )
+        installed = install_prebuilt(archive)
+    log("Installed " + ", ".join(path.name for path in installed) + f" in {ROOT / 'target' / 'fast'}")
+    log("Press Play; the first Play prepares the game files from your Minecraft copy.")
+    return 0
+
+
 def self_test(as_json: bool = False) -> int:
     """Report what the launcher would use, without opening a window."""
     version = pins()["version"]
@@ -613,6 +759,10 @@ class App:
         self.play_button.pack(side="left")
         self.prepare_button = ttk.Button(buttons, text="Prepare game files", command=self.prepare)
         self.prepare_button.pack(side="left", padx=(8, 0))
+        self.prebuilt_button = ttk.Button(
+            buttons, text="Download prebuilt", command=self.install_prebuilt
+        )
+        self.prebuilt_button.pack(side="left", padx=(8, 0))
         self.cancel_button = ttk.Button(buttons, text="Cancel", command=self.cancel, state="disabled")
         self.cancel_button.pack(side="left", padx=(8, 0))
         self.stop_button = ttk.Button(buttons, text="Stop game", command=self.stop_game, state="disabled")
@@ -737,6 +887,11 @@ class App:
         built = runnable(GAME_BIN) and runnable(PREPARE_BIN)
         if not runnable(GAME_BIN):
             status = "The game is not built yet — Play builds it first."
+            if prebuilt_asset() is not None:
+                status = (
+                    "The game is not built yet — Download prebuilt (no compiling), or Play to "
+                    "build it."
+                )
         elif not runnable(PREPARE_BIN):
             status = "The preparer is not built yet — Play builds it first."
         elif not complete:
@@ -755,6 +910,11 @@ class App:
             detail += " · Minecraft folder not set"
         self.detail_var.set(detail)
         self.progress["value"] = 1.0 if complete and (sounds or not self.sounds_var.get()) else 0.0
+        # Downloading only makes sense where there is an archive for this machine and the
+        # programs are not already here.
+        self.prebuilt_button.configure(
+            state="normal" if prebuilt_asset() and not built else "disabled"
+        )
 
     def write(self, text: str, tag: str | None = None) -> None:
         self.log.configure(state="normal")
@@ -1114,6 +1274,31 @@ class App:
 
         self.run_job(job, done, "downloading the server jar")
 
+    def install_prebuilt(self) -> None:
+        """Install the fork's prebuilt programs, for a machine that cannot build them."""
+        asset = prebuilt_asset()
+        if asset is None:
+            self.warn(
+                "Download prebuilt",
+                "No prebuilt build is published for this machine. The fork ships Linux x86_64 "
+                "programs; on other systems Play builds the game from source.",
+            )
+            return
+        if not self.confirm(
+            "Download Horizon",
+            "Download the prebuilt Linux build (about 75 MB) and install the game's programs "
+            "in this folder?\n\nNothing is compiled. The archive is checked against the "
+            "release's SHA-256 before it is used, and Play prepares the game files afterwards.",
+        ):
+            return
+
+        def done(code: int) -> None:
+            self.refresh()
+            if code == 0:
+                self.write("Prebuilt build installed — press Play.", "good")
+
+        self.run_job(lambda log: download_prebuilt(log), done, "downloading Horizon")
+
     def preflight(self) -> str:
         """Check the fields Play and Prepare need: "ok", "download" or "stop"."""
         folder_text = self.minecraft_var.get().strip()
@@ -1288,6 +1473,11 @@ def main(argv: list[str]) -> int:
         help="for a 4-8 GB machine: one compiler job, a 1 GB Java heap while preparing",
     )
     parser.add_argument("--json", action="store_true", help="with --self-test: print JSON")
+    parser.add_argument(
+        "--download-prebuilt",
+        action="store_true",
+        help="download and install the prebuilt Linux build, then exit",
+    )
     parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--smoke-prepare", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--smoke-play", action="store_true", help=argparse.SUPPRESS)
@@ -1295,6 +1485,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     if args.self_test:
         return self_test(args.json)
+    if args.download_prebuilt:
+        return download_prebuilt(print)
 
     if tk is None:
         print(

@@ -97,7 +97,21 @@ warns when the swap a first build needs is missing. Preparation runs one worker
 (`HORIZON_PREPARE_JOBS=1`) and caps every exporter JVM at 1 GB (`HORIZON_PREPARE_HEAP=1G`), so a
 step that outgrows the machine reports Java's OutOfMemoryError in the log instead of the session
 being killed. The setting is remembered, and `./tools/launcher.sh --low-memory` does the same from a
-terminal.
+terminal. A 4 GB machine is below any of this: it should not build the game at all.
+
+### Prebuilt builds (Releases)
+
+`.github/workflows/release.yml` builds `horizon-linux-x86_64.tar.gz` on a GitHub-hosted Ubuntu 22.04
+runner — the oldest glibc this project supports — and attaches it to a release, with `SHA256SUMS`.
+The archive holds `target/fast/{horizon-client,horizon-prepare,horizon-ctl}`, `tools/`, this lock
+file and the licence; never Mojang's files, assets or prepared resources.
+
+It is for the machines that cannot build: a 4 GB laptop needs no Rust at all, just the archive.
+Download, verify, unpack, run `./tools/launcher.sh`, press Play; the first Play still prepares the
+resources from the player's own Minecraft, and Java is still needed for that. In the launcher,
+**Download prebuilt** fetches and verifies the same archive; `--download-prebuilt` does it from a
+terminal. The workflow runs manually (Actions → fork release) or on a `v26.3-offline-*` tag and
+creates a draft first, so it can be inspected before publishing.
 
 By hand, the launcher is a convenience over:
 

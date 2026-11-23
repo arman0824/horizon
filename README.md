@@ -63,6 +63,20 @@ java -version          # "openjdk version \"25...\""
 Linux: `sudo apt install openjdk-25-jdk` (or your distro's equivalent).
 Windows: install [Temurin 25](https://adoptium.net/?specification=25) or any JDK 25.
 
+### No compiler? Download the Linux build
+
+A 4 GB machine cannot compile this project; it does not have to. The fork publishes a prebuilt
+**Linux x86_64** build on
+[Releases](https://github.com/arman0824/horizon/releases/latest): download
+`horizon-linux-x86_64.tar.gz`, check it against `SHA256SUMS`, unpack it wherever you like, and run
+`./tools/launcher.sh` inside. The launcher sees the programs and skips the build entirely — the
+steps below are the same from **Play** onward. This needs Rust nowhere on the machine; Java is still
+used once, to prepare the resources.
+
+In the launcher window, **Download prebuilt** does the same thing without leaving the app. It
+fetches the archive, checks its SHA-256 and installs the three programs; on macOS and Windows the
+button is disabled because no prebuilt build is published for them yet.
+
 ## Step 3 — Open the launcher
 
 ```sh
@@ -86,6 +100,7 @@ Later runs start in seconds: **Play** re-checks the prepared files and repairs o
 | **Worlds & settings** | Saves, `options.txt`, player name and logs (default `~/horizon-game`) |
 | **Copy the sounds too** | On by default, about 380 MB from your own game files; off means a silent game |
 | **Low-memory device** | For 4–8 GB machines: builds with one compiler job, one front-end thread and lower optimisation, and prepares with one worker and a 1 GB Java heap, so neither the first build nor the preparation takes the session down. Ticked automatically below 8 GB |
+| **Download prebuilt** | Linux x86_64 only: fetches the release's programs (about 75 MB), checks their SHA-256 and installs them, so nothing is compiled. Disabled once the game is built |
 | **Prepare game files** | Runs the preparation again by hand |
 | **Play** | Builds and prepares if needed, then starts the game |
 
@@ -181,7 +196,7 @@ Full details: [docs/forking.md](docs/forking.md) · upstream project:
 | `prepared game files are missing` | Press **Play** (it prepares), or run the terminal block above |
 | `--session-file: unknown option` | Expected — this fork signs nobody in |
 | A server refuses you with `invalidSession` | It is in online mode; this fork cannot join it |
-| The first build is killed, or the terminal says `/bin/fish crashed` / `Killed` | The system ran out of memory while compiling. Tick **Low-memory device** and press Play again; on 4 GB, add a 16 GB swap file first (`sudo fallocate -l 16G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile`). Close other apps. The full log is in `.local/logs/build-*.log`. |
+| The first build is killed, or the terminal says `/bin/fish crashed` / `Killed` | The system ran out of memory while compiling. On a 4 GB machine, stop building: download the prebuilt Linux build (above) and press Play. On 6–8 GB, tick **Low-memory device** and press Play again; adding a 16 GB swap file first helps. The full log is in `.local/logs/build-*.log`. |
 | The game is quiet | `--prepare` copies the sounds by default, so this is usually an old prepared folder: run `./target/fast/horizon-prepare sounds` **from the repo root** (it writes into the folder `--resources` names). No `Horizon: audio output …` line in `logs/latest.log` means the OS never gave the game a device. |
 | Items missing in an old modded world | The mod's files weren't present when you prepared |
 

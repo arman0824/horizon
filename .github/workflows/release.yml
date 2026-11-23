@@ -1,0 +1,133 @@
+name: fork release
+# The offline fork's own release: prebuilt Linux programs, so a machine that cannot compile
+# Horizon (a 4 GB laptop, a Chromebook, anything without Rust) can still install and play.
+#
+# This is not upstream's automation. It runs on GitHub's hosted runners, needs only this
+# repository's token, and publishes one asset: horizon-linux-x86_64.tar.gz with
+# target/fast/{horizon-client,horizon-prepare,horizon-ctl}, the launcher, research-lock.json
+# and the licence. No game files: the player's own Minecraft is what preparing reads.
+#
+#   Actions → fork release → Run workflow   (draft by default; publish it when you have looked)
+#
+# Manual only: a tag pushed by this workflow would start it again. The release's tag is created
+# at the commit the run was started from.
+#
+# Building for the oldest runner we support (Ubuntu 22.04, glibc 2.35) is deliberate: a binary
+# linked against a newer glibc refuses to start on an older distribution.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (created at this commit if it does not exist)"
+        required: true
+        default: v26.3-offline-2
+      draft:
+        description: "Leave the release as a draft"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag }}
+  # Shown by the game's reports; no version-bump commit. The release notes carry the tag.
+  HORIZON_VERSION: ${{ inputs.tag }}
+
+jobs:
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fork-release
+
+      - name: ALSA and udev headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+
+      - name: Build the game, horizon-prepare and horizon-ctl
+        # The client is horizon-game's binary in this fork; the release calls it horizon-client,
+        # which is what the launcher looks for. horizon-game is the offline entry: no account,
+        # no session hand-off.
+        run: |
+          cargo build --release --locked \
+            -p horizon-game --bin horizon-client \
+            -p horizon-client-lib --bin horizon-ctl \
+            -p horizon-prepare --bin horizon-prepare
+
+      - name: The programs start
+        run: |
+          ./target/release/horizon-client --help > /dev/null
+          ./target/release/horizon-prepare --help > /dev/null
+          ./target/release/horizon-ctl --help > /dev/null
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          dir=dist/horizon-linux-x86_64
+          mkdir -p "$dir/target/fast" "$dir/tools"
+          install -m 755 target/release/horizon-client  "$dir/target/fast/horizon-client"
+          install -m 755 target/release/horizon-prepare "$dir/target/fast/horizon-prepare"
+          install -m 755 target/release/horizon-ctl     "$dir/target/fast/horizon-ctl"
+          install -m 755 tools/launcher.py tools/launcher.sh tools/play-offline.sh "$dir/tools/"
+          # The preparer compiles its exporters from these sources on first use (javac 25, which
+          # preparing needs anyway), so the release needs no prebuilt exporter bundle.
+          install -d "$dir/mods/horizon/src/test"
+          cp -R mods/horizon/src/test/java "$dir/mods/horizon/src/test/"
+          install -m 644 research-lock.json README.md LICENSE docs/release-notes-offline.md "$dir/"
+          cp -r LICENSES "$dir/"
+          # The archive's own name, so a user can unpack it into any folder.
+          tar -czf "dist/horizon-linux-x86_64.tar.gz" -C dist horizon-linux-x86_64
+          ( cd dist && sha256sum horizon-linux-x86_64.tar.gz > SHA256SUMS )
+          ls -lh dist
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizon-linux-x86_64
+          path: |
+            dist/horizon-linux-x86_64.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+          files=(dist/horizon-linux-x86_64.tar.gz dist/SHA256SUMS)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            if [ "$DRAFT" = "false" ]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            fi
+          else
+            args=()
+            if [ "$DRAFT" = "true" ]; then args+=(--draft); fi
+            gh release create "$TAG" "${files[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Horizon 26.3 — offline Linux build, no account needed" \
+              --notes-file docs/release-notes-offline.md \
+              "${args[@]}"
+          fi
