@@ -578,7 +578,7 @@ def download_prebuilt(log=print, repo: str = RELEASE_REPO) -> int:
                 "Nothing was installed."
             )
         installed = install_prebuilt(archive)
-    log("Installed " + ", ".join(path.name for path in installed) + f" in {ROOT / 'target' / 'fast'}")
+    log("Installed " + ", ".join(path.name for path in installed) + f" in {installed[0].parent}")
     log("Press Play; the first Play prepares the game files from your Minecraft copy.")
     return 0
 
