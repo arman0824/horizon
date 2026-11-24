@@ -24,24 +24,67 @@ Not an official Minecraft product — see [Licence](#licence).
 | **Python 3 + tkinter** | The launcher window | Any current Python 3 |
 | **Rust** | Building from source only | 1.95 or newer |
 
-Java is not used to play. The prebuilt archive needs no Rust.
+Java is not used to play. Linux also needs ALSA and a working Vulkan driver.
 
-Linux also needs ALSA and a working Vulkan driver, as for any game.
+## Setup from source (Linux or macOS)
 
-## Install
+**1. Install the tools.**
 
-### Option A — Prebuilt Linux archive (no compiler)
+```sh
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+. "$HOME/.cargo/env"
 
-Download the archive **and `SHA256SUMS`** from
+# JDK 25 — macOS (Temurin is auto-detected; Homebrew needs the PATH line)
+brew install --cask temurin@25
+# or: brew install openjdk@25 && export PATH="/opt/homebrew/opt/openjdk@25/bin:$PATH"
+
+# JDK 25 — Debian/Ubuntu
+sudo apt install openjdk-25-jdk
+
+# Python with tkinter — Debian/Ubuntu (macOS: brew install python-tk)
+sudo apt install python3-tk
+```
+
+Check: `rustc --version` (1.95+), `java -version`, `javac -version`, `python3 -c "import tkinter"`.
+
+**2. Clone the repo.**
+
+```sh
+git clone https://github.com/arman0824/horizon.git
+cd horizon
+```
+
+**3. Open the launcher.**
+
+```sh
+./tools/launcher.sh
+```
+
+**4. Press Play.** The window finds Minecraft automatically; use **Browse…** if it does not.
+
+- On a fresh clone the game is not built yet, so it asks **Build the game** — click **Yes**.
+- The build takes 5–15 minutes the first time; the window stays open and shows its progress. It
+  happens once.
+- Then it finds or downloads the 26.3 server jar, prepares the game files and copies the sounds,
+  and opens the game. No account, no sign-in, nothing to click through.
+
+Later Plays start in seconds and repair only what changed. If you have 6–8 GB RAM, tick
+**Low-memory device** before the first build.
+
+## Low-RAM Linux machine — prebuilt archive (no compiler)
+
+Use this on a 4 GB (or memory-limited) machine: nothing compiles, so the memory a build needs is
+never touched. You still need Java 25 and Python 3 + tkinter; only Rust is skipped.
+
+**1. Download** the archive **and `SHA256SUMS`** from
 [Releases](https://github.com/arman0824/horizon/releases/latest):
 
 | Machine | Archive |
 | --- | --- |
 | Linux x86_64 (glibc 2.35 and newer) | `horizon-linux-x86_64.tar.gz` |
 
-Then, in order:
-
-**1. Check the download.** In the folder holding both files:
+**2. Check the download.** In the folder holding both files:
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
@@ -49,19 +92,21 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 It must print `OK`.
 
-**2. Extract it** to a folder you keep (for example `~/Games/horizon`):
+**3. Extract it** to a folder you keep (for example `~/Games/horizon`):
 
 ```sh
 tar xzf horizon-linux-x86_64.tar.gz
+cd horizon-linux-x86_64
 ```
 
-**3. Open the launcher** from inside the extracted folder:
+**4. Open the launcher.**
 
 ```sh
 ./tools/launcher.sh
 ```
 
-**4. Press Play.** The window finds Minecraft automatically; the first Play prepares the game files.
+**5. Press Play.** There is no build step: it finds or downloads the 26.3 server jar, prepares the
+game files, copies the sounds, and opens the game. Later Plays start in seconds.
 
 The launcher's **Download prebuilt** button does the same thing from inside the app: it downloads
 this archive, verifies its SHA-256 and installs the programs.
@@ -85,49 +130,9 @@ horizon-linux-x86_64/
 It holds no Minecraft jars, assets or sounds — those stay on your machine.
 </details>
 
-### Option B — Build from source (Linux or macOS)
+## Launcher fields
 
-Install the tools:
-
-```sh
-# Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-. "$HOME/.cargo/env"
-
-# JDK 25 — macOS
-brew install openjdk@25
-
-# JDK 25 — Debian/Ubuntu
-sudo apt install openjdk-25-jdk
-
-# Python with tkinter — Debian/Ubuntu (macOS: brew install python-tk)
-sudo apt install python3-tk
-```
-
-Then clone and open the launcher:
-
-```sh
-git clone https://github.com/arman0824/horizon.git
-cd horizon
-./tools/launcher.sh
-```
-
-## First Play
-
-The window finds Minecraft automatically; use **Browse…** if it does not. Press **Play**:
-
-1. **Builds the game** (5–15 minutes; skipped in the prebuilt archive).
-2. **Finds or downloads** the 26.3 server jar (62 MB, checked against the SHA-1 in
-   `research-lock.json`).
-3. **Prepares the game files and copies the sounds**, so the game is not silent.
-4. **Opens the game.** No account, no sign-in, nothing to click through.
-
-Later Plays start in seconds and repair only what changed.
-
-On a 4 GB machine, use the prebuilt archive: nothing compiles, so the memory a build needs is never
-touched. The **Low-memory device** tick only affects building from source.
-
-| Launcher field | What it does |
+| Field | What it does |
 | --- | --- |
 | **Minecraft folder** | Where your launcher installed Minecraft; found automatically |
 | **Server file** | The 26.3 `server.jar`, read once to build the game's data |
@@ -136,7 +141,7 @@ touched. The **Low-memory device** tick only affects building from source.
 | **Low-memory device** | One compiler job and a 1 GB Java heap for 4–8 GB machines; on automatically below 8 GB |
 | **Download prebuilt** | Installs the Linux release archive, no compilation (Linux x86_64 only) |
 | **Prepare game files** | Runs preparation again |
-| **Play** | Builds and prepares if needed, then starts the game |
+| **Play** | Builds (first time) and prepares if needed, then starts the game |
 
 ## Terminal instead of the launcher
 
