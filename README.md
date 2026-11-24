@@ -30,31 +30,56 @@ Java is not used to play. The prebuilt archives need no Rust.
 
 ### Option A — Prebuilt archive (no compiler)
 
-Download from [Releases](https://github.com/arman0824/horizon/releases/latest):
+Download the archive for your machine **and `SHA256SUMS`** from
+[Releases](https://github.com/arman0824/horizon/releases/latest):
 
-| Machine | Archive | Open it with |
-| --- | --- | --- |
-| Linux x86_64 | `horizon-linux-x86_64.tar.gz` | `./tools/launcher.sh` |
-| Windows x86_64 | `horizon-windows-x86_64.zip` | `Start Horizon.bat` |
-| Apple Silicon Mac (M1 and later) | `horizon-macos-arm64.tar.gz` | `Horizon Launcher.command` |
+| Machine | Archive |
+| --- | --- |
+| Linux x86_64 | `horizon-linux-x86_64.tar.gz` |
+| Windows x86_64 | `horizon-windows-x86_64.zip` |
+| Apple Silicon Mac (M1 and later) | `horizon-macos-arm64.tar.gz` |
 
-Verify and unpack:
+Then, in order:
+
+**1. Check the download.** In the folder holding both files:
 
 ```sh
-# Linux
-sha256sum -c SHA256SUMS --ignore-missing
-tar xzf horizon-linux-x86_64.tar.gz
+sha256sum -c SHA256SUMS --ignore-missing       # Linux
+shasum -a 256 -c SHA256SUMS --ignore-missing   # macOS
+```
 
-# macOS
-shasum -a 256 -c SHA256SUMS --ignore-missing
-tar xzf horizon-macos-arm64.tar.gz
+```powershell
+# Windows: the printed hash must match the zip's line in SHA256SUMS
+Get-FileHash .\horizon-windows-x86_64.zip -Algorithm SHA256
+```
+
+Every downloaded archive must print `OK` (or match its line in `SHA256SUMS`).
+
+**2. Extract it** to a folder you keep (for example `~/Games/horizon`):
+
+```sh
+tar xzf horizon-linux-x86_64.tar.gz      # Linux
+tar xzf horizon-macos-arm64.tar.gz       # macOS (or double-click it in Finder)
 ```
 
 **Windows:** right-click the `.zip` → **Properties** → tick **Unblock** → **Apply**, then
-**Extract All**. Opening `Start Horizon.bat` from the zip preview does not work.
+**Extract All** and open the extracted folder. Do not run anything from the zip preview.
 
-**macOS:** the archive is unsigned. Right-click `Horizon Launcher.command` → **Open** → **Open**.
-If macOS still refuses, run `xattr -dr com.apple.quarantine horizon-macos-arm64` once.
+**3. Open the launcher** from inside the extracted folder:
+
+| Machine | Do this |
+| --- | --- |
+| Linux | `./tools/launcher.sh` |
+| macOS | double-click `Horizon Launcher.command` |
+| Windows | double-click `Start Horizon.bat` |
+
+The Windows and macOS archives are unsigned, so each asks once:
+
+- **macOS:** right-click `Horizon Launcher.command` → **Open** → **Open**. If it still refuses, run
+  `xattr -dr com.apple.quarantine horizon-macos-arm64` in Terminal once.
+- **Windows:** SmartScreen says "Windows protected your PC" → **More info** → **Run anyway**.
+
+**4. Press Play.** The window finds Minecraft automatically; the first Play prepares the game files.
 
 The launcher's **Download prebuilt** button does the same thing from inside the app: it picks this
 machine's archive, verifies its SHA-256 and installs the programs.
