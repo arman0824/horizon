@@ -107,7 +107,7 @@ terminal. A 4 GB machine is below any of this: it should not build the game at a
 | --- | --- | --- |
 | `linux` | `ubuntu-22.04` — the oldest glibc this project supports | `horizon-linux-x86_64.tar.gz` |
 | `windows` | `windows-2022` (MSVC) | `horizon-windows-x86_64.zip` |
-| `macos` | `macos-14` (Apple Silicon) | `horizon-macos-arm64.tar.gz` |
+| `macos` | `macos-15` (Apple Silicon) | `horizon-macos-arm64.tar.gz` |
 
 A `publish` job then collects the three, writes one `SHA256SUMS` covering all of them, checks that
 no archive holds a `.jar`, a `minecraft/` directory or `.local/`, and creates the release once.
