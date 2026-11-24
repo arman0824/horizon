@@ -24,77 +24,59 @@ Not an official Minecraft product — see [Licence](#licence).
 | **Python 3 + tkinter** | The launcher window | Any current Python 3 |
 | **Rust** | Building from source only | 1.95 or newer |
 
-Java is not used to play. The prebuilt archives need no Rust.
+Java is not used to play. The prebuilt archive needs no Rust.
+
+Linux also needs ALSA and a working Vulkan driver, as for any game.
 
 ## Install
 
-### Option A — Prebuilt archive (no compiler)
+### Option A — Prebuilt Linux archive (no compiler)
 
-Download the archive for your machine **and `SHA256SUMS`** from
+Download the archive **and `SHA256SUMS`** from
 [Releases](https://github.com/arman0824/horizon/releases/latest):
 
 | Machine | Archive |
 | --- | --- |
-| Linux x86_64 | `horizon-linux-x86_64.tar.gz` |
-| Windows x86_64 | `horizon-windows-x86_64.zip` |
-| Apple Silicon Mac (M1 and later) | `horizon-macos-arm64.tar.gz` |
+| Linux x86_64 (glibc 2.35 and newer) | `horizon-linux-x86_64.tar.gz` |
 
 Then, in order:
 
 **1. Check the download.** In the folder holding both files:
 
 ```sh
-sha256sum -c SHA256SUMS --ignore-missing       # Linux
-shasum -a 256 -c SHA256SUMS --ignore-missing   # macOS
+sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-```powershell
-# Windows: the printed hash must match the zip's line in SHA256SUMS
-Get-FileHash .\horizon-windows-x86_64.zip -Algorithm SHA256
-```
-
-Every downloaded archive must print `OK` (or match its line in `SHA256SUMS`).
+It must print `OK`.
 
 **2. Extract it** to a folder you keep (for example `~/Games/horizon`):
 
 ```sh
-tar xzf horizon-linux-x86_64.tar.gz      # Linux
-tar xzf horizon-macos-arm64.tar.gz       # macOS (or double-click it in Finder)
+tar xzf horizon-linux-x86_64.tar.gz
 ```
-
-**Windows:** right-click the `.zip` → **Properties** → tick **Unblock** → **Apply**, then
-**Extract All** and open the extracted folder. Do not run anything from the zip preview.
 
 **3. Open the launcher** from inside the extracted folder:
 
-| Machine | Do this |
-| --- | --- |
-| Linux | `./tools/launcher.sh` |
-| macOS | double-click `Horizon Launcher.command` |
-| Windows | double-click `Start Horizon.bat` |
-
-The Windows and macOS archives are unsigned, so each asks once:
-
-- **macOS:** right-click `Horizon Launcher.command` → **Open** → **Open**. If it still refuses, run
-  `xattr -dr com.apple.quarantine horizon-macos-arm64` in Terminal once.
-- **Windows:** SmartScreen says "Windows protected your PC" → **More info** → **Run anyway**.
+```sh
+./tools/launcher.sh
+```
 
 **4. Press Play.** The window finds Minecraft automatically; the first Play prepares the game files.
 
-The launcher's **Download prebuilt** button does the same thing from inside the app: it picks this
-machine's archive, verifies its SHA-256 and installs the programs.
+The launcher's **Download prebuilt** button does the same thing from inside the app: it downloads
+this archive, verifies its SHA-256 and installs the programs.
 
 <details>
 <summary>What the archive contains</summary>
 
 ```
-horizon-linux-x86_64/          (macOS and Windows: same layout)
-  target/fast/horizon-client      the game        (.exe on Windows)
+horizon-linux-x86_64/
+  target/fast/horizon-client      the game
   target/fast/horizon-prepare     reads your Minecraft files
   target/fast/horizon-ctl         command-line control (optional)
-  tools/launcher.sh               the window      (Windows: Start Horizon.bat)
-  tools/launcher.py                               (macOS: Horizon Launcher.command)
-  tools/play-offline.sh           the same thing in a terminal (Linux, macOS)
+  tools/launcher.sh               the window
+  tools/launcher.py
+  tools/play-offline.sh           the same thing in a terminal
   mods/horizon/src/test/java/     exporter sources, compiled once on first prepare
   research-lock.json              the Minecraft 26.3 files it checks
   README.md, LICENSE, LICENSES/
@@ -103,7 +85,7 @@ horizon-linux-x86_64/          (macOS and Windows: same layout)
 It holds no Minecraft jars, assets or sounds — those stay on your machine.
 </details>
 
-### Option B — Build from source
+### Option B — Build from source (Linux or macOS)
 
 Install the tools:
 
@@ -117,9 +99,10 @@ brew install openjdk@25
 
 # JDK 25 — Debian/Ubuntu
 sudo apt install openjdk-25-jdk
-```
 
-Windows: [rustup-init.exe](https://rustup.rs) and [Temurin 25](https://adoptium.net/?specification=25).
+# Python with tkinter — Debian/Ubuntu (macOS: brew install python-tk)
+sudo apt install python3-tk
+```
 
 Then clone and open the launcher:
 
@@ -129,16 +112,11 @@ cd horizon
 ./tools/launcher.sh
 ```
 
-```bat
-:: Windows
-tools\launcher.bat
-```
-
 ## First Play
 
 The window finds Minecraft automatically; use **Browse…** if it does not. Press **Play**:
 
-1. **Builds the game** (5–15 minutes; skipped in the prebuilt archives).
+1. **Builds the game** (5–15 minutes; skipped in the prebuilt archive).
 2. **Finds or downloads** the 26.3 server jar (62 MB, checked against the SHA-1 in
    `research-lock.json`).
 3. **Prepares the game files and copies the sounds**, so the game is not silent.
@@ -156,7 +134,7 @@ touched. The **Low-memory device** tick only affects building from source.
 | **Worlds & settings** | Saves, `options.txt`, player name and logs (default `~/horizon-game`) |
 | **Copy the sounds too** | On by default, about 380 MB from your own files; off means silence |
 | **Low-memory device** | One compiler job and a 1 GB Java heap for 4–8 GB machines; on automatically below 8 GB |
-| **Download prebuilt** | Installs this machine's release archive, no compilation |
+| **Download prebuilt** | Installs the Linux release archive, no compilation (Linux x86_64 only) |
 | **Prepare game files** | Runs preparation again |
 | **Play** | Builds and prepares if needed, then starts the game |
 
@@ -216,7 +194,7 @@ Details: [docs/forking.md](docs/forking.md) · upstream: [horizon-rust/horizon](
 | `prepared game files are missing` | Press **Play**, or run the terminal commands above |
 | `--session-file: unknown option` | Expected — this fork signs nobody in |
 | A server refuses you with `invalidSession` | It is online-mode; this fork cannot join it |
-| The window does not open | `./tools/launcher.sh --self-test` (Linux/macOS) or `py -3 tools\launcher.py --self-test` (Windows) names the cause; usually Python without tkinter |
+| The window does not open | `./tools/launcher.sh --self-test` names the cause; usually Python without tkinter |
 | The build is killed / `Killed` | Out of memory. On 4 GB, use the prebuilt archive. On 6–8 GB, tick **Low-memory device** and retry. Logs: `.local/logs/build-*.log` |
 | The game is silent | Run `./target/fast/horizon-prepare sounds` from the repo root, or re-prepare with **Copy the sounds** ticked |
 | Items missing in a modded world | The mod's files were not present when you prepared |

@@ -101,31 +101,17 @@ terminal. A 4 GB machine is below any of this: it should not build the game at a
 
 ### Prebuilt builds (Releases)
 
-`.github/workflows/release.yml` builds one archive per platform on native GitHub-hosted runners:
-
-| Job | Runner | Archive |
-| --- | --- | --- |
-| `linux` | `ubuntu-22.04` — the oldest glibc this project supports | `horizon-linux-x86_64.tar.gz` |
-| `windows` | `windows-2022` (MSVC) | `horizon-windows-x86_64.zip` |
-| `macos` | `macos-15` (Apple Silicon) | `horizon-macos-arm64.tar.gz` |
-
-A `publish` job then collects the three, writes one `SHA256SUMS` covering all of them, checks that
-no archive holds a `.jar`, a `minecraft/` directory or `.local/`, and creates the release once.
-Every archive holds `target/fast/{horizon-client,horizon-prepare,horizon-ctl}` (`.exe` on Windows),
-`tools/`, this lock file, the licence and the exporter sources; never Mojang's files, assets or
-prepared resources. Windows gets `Start Horizon.bat` at the top level, macOS
-`Horizon Launcher.command`; Linux keeps `tools/launcher.sh`.
+`.github/workflows/release.yml` builds `horizon-linux-x86_64.tar.gz` on a GitHub-hosted Ubuntu 22.04
+runner — the oldest glibc this project supports — and attaches it to a release, with `SHA256SUMS`.
+The archive holds `target/fast/{horizon-client,horizon-prepare,horizon-ctl}`, `tools/`, this lock
+file and the licence; never Mojang's files, assets or prepared resources.
 
 It is for the machines that cannot build: a 4 GB laptop needs no Rust at all, just the archive.
-Download, verify, unpack, open the launcher, press Play; the first Play still prepares the resources
-from the player's own Minecraft, and Java 25 (with `javac`) is still needed for that, as is Python 3
-with Tk for the window. In the launcher, **Download prebuilt** picks the archive for the running
-machine, fetches and verifies it; `--download-prebuilt` does it from a terminal. The workflow runs
-manually (Actions → fork release) and creates a draft first, so it can be inspected before
-publishing.
-
-The archives are unsigned. Windows SmartScreen and macOS Gatekeeper warn once; the release notes
-tell the player what to click.
+Download, verify, unpack, run `./tools/launcher.sh`, press Play; the first Play still prepares the
+resources from the player's own Minecraft, and Java is still needed for that. In the launcher,
+**Download prebuilt** fetches and verifies the same archive; `--download-prebuilt` does it from a
+terminal. The workflow runs manually (Actions → fork release) or on a `v26.3-offline-*` tag and
+creates a draft first, so it can be inspected before publishing.
 
 By hand, the launcher is a convenience over:
 
