@@ -205,6 +205,8 @@ jobs:
           $root = Join-Path $tmp 'horizon-windows-x86_64'
           # Resources are absent by design, so --self-test exits 1; the JSON still says what it saw.
           $setup = (py -3 (Join-Path $root 'tools/launcher.py') --self-test --json) | ConvertFrom-Json
+          # --self-test exits 1 without prepared resources; the step must not inherit that.
+          $LASTEXITCODE = 0
           if (-not $setup.game_built) { throw 'the launcher does not see horizon-client.exe' }
           if (-not $setup.prepare_built) { throw 'the launcher does not see horizon-prepare.exe' }
           if ($setup.game_binary -notlike '*target\fast\horizon-client.exe') { throw "unexpected game binary: $($setup.game_binary)" }
