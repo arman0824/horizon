@@ -29,6 +29,7 @@ EXEMPT = {
     "build_release.py": "builds and packs the release",
     "release_train.py": "release bookkeeping",
     "pr_ready.py": "runs cargo checks and parity.py",
+    "fast_bins.py": "names the packages and binaries harnesses build, starts no game",
     "test_scope.py": "names the crates a pull request's tests cover, starts no game",
     "test_friends_integration_parity.py": "builds binaries; test_friends.Game isolates every game through integration_env",
     "test_management_protocol_parity.py": "starts both servers through server_bench.Server, which uses lab.game_env",
@@ -37,6 +38,7 @@ EXEMPT = {
     "port_harness.py": "ports Java code, starts no game",
     "native_dylib_probe.py": "builds the game's executable to read its imports; runs only probe fixtures, never the game",
     "profile_client_e2e.py": "starts its games through agent_control_e2e.scratch, which uses game_env",
+    "launcher.py": "the offline fork's player-facing launcher: opening the real game folder and data is the point; its --smoke-* modes use scratch homes",
 }
 
 

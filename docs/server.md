@@ -89,6 +89,8 @@ clock `/tick query` uses), players (name, UUID, address, ping, position), loaded
 inventory on this same server thread and answers `{"mods":[{"id":"example","version":"1"}]}`.
 It includes native, wasm and content packages installed in that inventory, in inventory order; an empty
 inventory is `{"mods":[]}`. The supervisor's `GET /api/v1/mods` uses this query, never a build-record fallback.
+`memory` answers what `horizon-ctl memory` shows for a game with a window: the resident set, the allocator's
+committed bytes, and the server's parts (chunks, entities, players, chunk send caches, generation).
 
 **A proxy moving a player between two servers** uses more requests on this endpoint (`lan/arrivals.rs`,
 `game/interface/dedicated/transfer.rs`). They are a built-in module, **off by default**, that the owner turns on in
@@ -696,9 +698,11 @@ runtime or new dependency. Server-sent events can replace the polling later if a
   0.0.0.0 or a public IP, is refused unless `panel.allow_public = true` is set, and even then the panel logs
   a warning at every start.
 - **Who may act.** The API token in `.horizon/api.json` (file mode 0600) is what the CLI and MCP use. Browsers
-  get a one-time login link from `horizon-server panel`: a code good for 10 minutes, swapped for an
-  `HttpOnly; SameSite=Strict` session cookie. Anyone who can read the server folder can manage the server,
-  and no one else can. Sessions end when the supervisor stops.
+  get a one-time login link from `horizon-server panel`: a code good for 10 minutes, swapped for a session
+  that the page keeps for its tab and sends in the `X-Horizon-Session` header (no cookie: a new tab needs a
+  new link). Anyone who can read the server folder can manage the server, and no one else can. A session
+  ends on sign-out, after 12 hours unused (an open page polls every second, so this ends closed tabs and
+  machines left asleep), 7 days after sign-in however much it is used, or when the supervisor stops.
 - **Protection.** The `Host` header must name the panel itself: its address, `localhost` on loopback, or a
   tailnet name (a MagicDNS short name or `*.ts.net`); bound to every interface (`0.0.0.0` or `::`), any IP
   address with the panel's port. That stops DNS rebinding. Changes (POST, PATCH, DELETE) need

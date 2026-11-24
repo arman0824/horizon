@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tools import launcher
+from tools import lab, launcher
 
 
 class ClassifyMinecraftTest(unittest.TestCase):
@@ -15,8 +15,8 @@ class ClassifyMinecraftTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             self.assertEqual(launcher.classify_minecraft(folder), "minecraft")
-            (folder / "versions" / "26.3").mkdir(parents=True)
-            self.assertTrue(launcher.has_version(folder, "26.3"))
+            (folder / "versions" / lab.VERSION).mkdir(parents=True)
+            self.assertTrue(launcher.has_version(folder, lab.VERSION))
 
     def test_a_prism_root_is_prism(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -27,14 +27,14 @@ class ClassifyMinecraftTest(unittest.TestCase):
     def test_a_prism_instance_keeps_the_game_one_level_down(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
-            (folder / "minecraft" / "versions" / "26.3").mkdir(parents=True)
+            (folder / "minecraft" / "versions" / lab.VERSION).mkdir(parents=True)
             self.assertEqual(launcher.classify_minecraft(folder), "prism")
-            self.assertTrue(launcher.has_version(folder, "26.3"))
+            self.assertTrue(launcher.has_version(folder, lab.VERSION))
 
     def test_a_folder_without_the_version_is_not_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
-            self.assertFalse(launcher.has_version(folder, "26.3"))
+            self.assertFalse(launcher.has_version(folder, lab.VERSION))
 
 
 class CommandTest(unittest.TestCase):
