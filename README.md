@@ -84,6 +84,25 @@ The Windows and macOS archives are unsigned, so each asks once:
 The launcher's **Download prebuilt** button does the same thing from inside the app: it picks this
 machine's archive, verifies its SHA-256 and installs the programs.
 
+<details>
+<summary>What the archive contains</summary>
+
+```
+horizon-linux-x86_64/          (macOS and Windows: same layout)
+  target/fast/horizon-client      the game        (.exe on Windows)
+  target/fast/horizon-prepare     reads your Minecraft files
+  target/fast/horizon-ctl         command-line control (optional)
+  tools/launcher.sh               the window      (Windows: Start Horizon.bat)
+  tools/launcher.py                               (macOS: Horizon Launcher.command)
+  tools/play-offline.sh           the same thing in a terminal (Linux, macOS)
+  mods/horizon/src/test/java/     exporter sources, compiled once on first prepare
+  research-lock.json              the Minecraft 26.3 files it checks
+  README.md, LICENSE, LICENSES/
+```
+
+It holds no Minecraft jars, assets or sounds — those stay on your machine.
+</details>
+
 ### Option B — Build from source
 
 Install the tools:
@@ -126,6 +145,9 @@ The window finds Minecraft automatically; use **Browse…** if it does not. Pres
 4. **Opens the game.** No account, no sign-in, nothing to click through.
 
 Later Plays start in seconds and repair only what changed.
+
+On a 4 GB machine, use the prebuilt archive: nothing compiles, so the memory a build needs is never
+touched. The **Low-memory device** tick only affects building from source.
 
 | Launcher field | What it does |
 | --- | --- |
