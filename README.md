@@ -65,7 +65,7 @@ Windows: install [Temurin 25](https://adoptium.net/?specification=25) or any JDK
 
 ### No compiler? Download the Linux build
 
-A 4 GB machine cannot compile this project; it does not have to. The fork publishes a prebuilt
+A 4-8 GB ram machine cannot compile this project; it does not have to. The fork publishes a prebuilt
 **Linux x86_64** build on
 [Releases](https://github.com/arman0824/horizon/releases/latest): download
 `horizon-linux-x86_64.tar.gz`, check it against `SHA256SUMS`, unpack it wherever you like, and run
