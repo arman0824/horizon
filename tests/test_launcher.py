@@ -4,6 +4,7 @@ import os
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -124,13 +125,17 @@ class BuildTest(unittest.TestCase):
 
 
 class PrebuiltTest(unittest.TestCase):
-    def test_the_asset_is_the_linux_build(self):
-        with mock.patch.object(launcher.sys, "platform", "linux"), \
-                mock.patch.object(launcher.platform, "machine", lambda: "x86_64"):
-            self.assertEqual(launcher.prebuilt_asset(), launcher.PREBUILT_ASSET)
-        with mock.patch.object(launcher.sys, "platform", "darwin"), \
-                mock.patch.object(launcher.platform, "machine", lambda: "arm64"):
-            self.assertIsNone(launcher.prebuilt_asset())
+    def test_each_platform_has_its_archive(self):
+        self.assertEqual(launcher.asset_for("linux", "x86_64"), "horizon-linux-x86_64.tar.gz")
+        self.assertEqual(launcher.asset_for("win32", "AMD64"), "horizon-windows-x86_64.zip")
+        self.assertEqual(launcher.asset_for("darwin", "arm64"), "horizon-macos-arm64.tar.gz")
+        self.assertIsNone(launcher.asset_for("darwin", "x86_64"))
+        self.assertIsNone(launcher.asset_for("linux", "aarch64"))
+
+    def test_the_asset_is_for_this_machine(self):
+        self.assertEqual(
+            launcher.prebuilt_asset(), launcher.asset_for(*launcher.this_platform())
+        )
 
     def test_the_checksum_comes_from_the_sums_file(self):
         digest = "a" * 64
@@ -144,12 +149,13 @@ class PrebuiltTest(unittest.TestCase):
     def test_installing_takes_the_binaries_and_nothing_else(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
+            suffix = launcher.BINARY_SUFFIX
             archive = self.archive(
                 tmp,
                 {
-                    "horizon-linux-x86_64/target/fast/horizon-client": b"game",
-                    "horizon-linux-x86_64/target/fast/horizon-prepare": b"prepare",
-                    "horizon-linux-x86_64/target/fast/horizon-ctl": b"ctl",
+                    f"horizon-linux-x86_64/target/fast/horizon-client{suffix}": b"game",
+                    f"horizon-linux-x86_64/target/fast/horizon-prepare{suffix}": b"prepare",
+                    f"horizon-linux-x86_64/target/fast/horizon-ctl{suffix}": b"ctl",
                     "horizon-linux-x86_64/README.md": b"readme",
                 },
             )
@@ -157,22 +163,65 @@ class PrebuiltTest(unittest.TestCase):
             installed = launcher.install_prebuilt(archive, root)
             self.assertEqual(
                 {path.name for path in installed},
-                {"horizon-client", "horizon-prepare", "horizon-ctl"},
+                {
+                    f"horizon-client{suffix}",
+                    f"horizon-prepare{suffix}",
+                    f"horizon-ctl{suffix}",
+                },
             )
-            binary = root / "target" / "fast" / "horizon-client"
+            binary = root / "target" / "fast" / f"horizon-client{suffix}"
             self.assertEqual(binary.read_bytes(), b"game")
             self.assertTrue(os.access(binary, os.X_OK))
             self.assertFalse((root / "target" / "fast" / "README.md").exists())
 
+    def test_a_zip_archive_installs_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            suffix = launcher.BINARY_SUFFIX
+            archive = self.zip_archive(
+                tmp,
+                {
+                    f"horizon-windows-x86_64/target/fast/horizon-client{suffix}": b"game",
+                    f"horizon-windows-x86_64/target/fast/horizon-prepare{suffix}": b"prepare",
+                    "horizon-windows-x86_64/tools/launcher.py": b"launcher",
+                },
+            )
+            installed = launcher.install_prebuilt(archive, tmp / "root")
+            self.assertEqual(
+                {path.name for path in installed},
+                {f"horizon-client{suffix}", f"horizon-prepare{suffix}"},
+            )
+            self.assertEqual(
+                (tmp / "root" / "target" / "fast" / f"horizon-client{suffix}").read_bytes(),
+                b"game",
+            )
+
     def test_an_archive_with_a_path_outside_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
+            suffix = launcher.BINARY_SUFFIX
             archive = self.archive(
                 tmp,
                 {
                     "../escaped": b"no",
-                    "horizon-linux-x86_64/target/fast/horizon-client": b"game",
-                    "horizon-linux-x86_64/target/fast/horizon-prepare": b"prepare",
+                    f"horizon-linux-x86_64/target/fast/horizon-client{suffix}": b"game",
+                    f"horizon-linux-x86_64/target/fast/horizon-prepare{suffix}": b"prepare",
+                },
+            )
+            with self.assertRaises(ValueError):
+                launcher.install_prebuilt(archive, tmp / "root")
+            self.assertFalse((tmp / "escaped").exists())
+
+    def test_a_zip_with_a_path_outside_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            suffix = launcher.BINARY_SUFFIX
+            archive = self.zip_archive(
+                tmp,
+                {
+                    "../escaped": b"no",
+                    f"horizon-windows-x86_64/target/fast/horizon-client{suffix}": b"game",
+                    f"horizon-windows-x86_64/target/fast/horizon-prepare{suffix}": b"prepare",
                 },
             )
             with self.assertRaises(ValueError):
@@ -182,16 +231,18 @@ class PrebuiltTest(unittest.TestCase):
     def test_a_partial_archive_leaves_the_installed_game_alone(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
+            suffix = launcher.BINARY_SUFFIX
             archive = self.archive(
-                tmp, {"horizon-linux-x86_64/target/fast/horizon-prepare": b"prepare"}
+                tmp,
+                {f"horizon-linux-x86_64/target/fast/horizon-prepare{suffix}": b"prepare"},
             )
             fast = tmp / "root" / "target" / "fast"
             fast.mkdir(parents=True)
-            (fast / "horizon-client").write_bytes(b"old")
+            (fast / f"horizon-client{suffix}").write_bytes(b"old")
             with self.assertRaises(ValueError):
                 launcher.install_prebuilt(archive, tmp / "root")
-            self.assertEqual((fast / "horizon-client").read_bytes(), b"old")
-            self.assertFalse((fast / "horizon-prepare").exists())
+            self.assertEqual((fast / f"horizon-client{suffix}").read_bytes(), b"old")
+            self.assertFalse((fast / f"horizon-prepare{suffix}").exists())
             self.assertEqual(list(fast.glob("*.part")), [])
 
     @staticmethod
@@ -203,6 +254,14 @@ class PrebuiltTest(unittest.TestCase):
                 info.size = len(data)
                 info.mode = 0o644
                 tar.addfile(info, io.BytesIO(data))
+        return path
+
+    @staticmethod
+    def zip_archive(directory: Path, entries: dict[str, bytes]) -> Path:
+        path = directory / "release.zip"
+        with zipfile.ZipFile(path, "w") as bundle:
+            for name, data in entries.items():
+                bundle.writestr(name, data)
         return path
 
 

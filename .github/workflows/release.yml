@@ -1,19 +1,18 @@
 name: fork release
-# The offline fork's own release: prebuilt Linux programs, so a machine that cannot compile
-# Horizon (a 4 GB laptop, a Chromebook, anything without Rust) can still install and play.
+# The offline fork's own release: prebuilt programs for machines that cannot or should not
+# compile Horizon. One archive per platform, each built on its own runner:
 #
-# This is not upstream's automation. It runs on GitHub's hosted runners, needs only this
-# repository's token, and publishes one asset: horizon-linux-x86_64.tar.gz with
-# target/fast/{horizon-client,horizon-prepare,horizon-ctl}, the launcher, research-lock.json
-# and the licence. No game files: the player's own Minecraft is what preparing reads.
+#   horizon-linux-x86_64.tar.gz
+#   horizon-windows-x86_64.zip
+#   horizon-macos-arm64.tar.gz
+#
+# Every archive holds target/fast/{horizon-client,horizon-prepare,horizon-ctl}, the Python
+# launcher, research-lock.json, the licence and the exporter sources (compiled once on first
+# prepare). No game files: the player's own Minecraft is what preparing reads.
 #
 #   Actions → fork release → Run workflow   (draft by default; publish it when you have looked)
 #
-# Manual only: a tag pushed by this workflow would start it again. The release's tag is created
-# at the commit the run was started from.
-#
-# Building for the oldest runner we support (Ubuntu 22.04, glibc 2.35) is deliberate: a binary
-# linked against a newer glibc refuses to start on an older distribution.
+# Manual only. The release's tag is created at the commit the run was started from.
 
 on:
   workflow_dispatch:
@@ -21,7 +20,7 @@ on:
       tag:
         description: "Release tag (created at this commit if it does not exist)"
         required: true
-        default: v26.3-offline-2
+        default: v26.3-offline-4
       draft:
         description: "Leave the release as a draft"
         type: boolean
@@ -58,7 +57,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: fork-release
+          shared-key: fork-release-linux
 
       - name: ALSA and udev headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
@@ -94,20 +93,251 @@ jobs:
           cp -R mods/horizon/src/test/java "$dir/mods/horizon/src/test/"
           install -m 644 research-lock.json README.md LICENSE docs/release-notes-offline.md "$dir/"
           cp -r LICENSES "$dir/"
-          # The archive's own name, so a user can unpack it into any folder.
           tar -czf "dist/horizon-linux-x86_64.tar.gz" -C dist horizon-linux-x86_64
-          ( cd dist && sha256sum horizon-linux-x86_64.tar.gz > SHA256SUMS )
           ls -lh dist
+
+      - name: The archive runs the launcher
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          tar xzf dist/horizon-linux-x86_64.tar.gz -C "$tmp"
+          cd "$tmp/horizon-linux-x86_64"
+          # Resources are absent by design, so --self-test exits 1; the JSON still says what it saw.
+          python3 tools/launcher.py --self-test --json > setup.json || true
+          python3 - <<'PY'
+          import json, sys
+          setup = json.load(open("setup.json"))
+          missing = [key for key in ("game_built", "prepare_built") if not setup[key]]
+          if missing:
+              sys.exit(f"the archive's launcher does not see: {', '.join(missing)}")
+          if not setup["game_binary"].endswith("target/fast/horizon-client"):
+              sys.exit(f"unexpected game binary: {setup['game_binary']}")
+          PY
+          test -x target/fast/horizon-client
+          test -x target/fast/horizon-prepare
+          test -x target/fast/horizon-ctl
+          test -x tools/launcher.sh
+          file target/fast/horizon-client | grep -q 'ELF 64-bit.*x86-64'
 
       - name: Upload the archive
         uses: actions/upload-artifact@v4
         with:
           name: horizon-linux-x86_64
-          path: |
-            dist/horizon-linux-x86_64.tar.gz
-            dist/SHA256SUMS
+          path: dist/horizon-linux-x86_64.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+  windows:
+    name: Windows x86_64
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      # The C runtime linked in, so the game runs without the Visual C++ redistributable.
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fork-release-windows
+
+      - name: Build the game, horizon-prepare and horizon-ctl
+        shell: pwsh
+        run: |
+          cargo build --release --locked `
+            -p horizon-game --bin horizon-client `
+            -p horizon-client-lib --bin horizon-ctl `
+            -p horizon-prepare --bin horizon-prepare
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: The programs start
+        shell: pwsh
+        run: |
+          .\target\release\horizon-client.exe --help | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          .\target\release\horizon-prepare.exe --help | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          .\target\release\horizon-ctl.exe --help | Out-Null
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: The programs are 64-bit Windows
+        shell: pwsh
+        run: |
+          py -3 tools/check_pe_arch.py x64 `
+            target/release/horizon-client.exe target/release/horizon-ctl.exe `
+            target/release/horizon-prepare.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = 'dist/horizon-windows-x86_64'
+          New-Item -ItemType Directory -Force -Path "$dir/target/fast", "$dir/tools" | Out-Null
+          Copy-Item target/release/horizon-client.exe  "$dir/target/fast/"
+          Copy-Item target/release/horizon-prepare.exe "$dir/target/fast/"
+          Copy-Item target/release/horizon-ctl.exe     "$dir/target/fast/"
+          Copy-Item tools/launcher.py "$dir/tools/"
+          Copy-Item tools/launcher.bat "$dir/Start Horizon.bat"
+          New-Item -ItemType Directory -Force -Path "$dir/mods/horizon/src/test" | Out-Null
+          Copy-Item -Recurse mods/horizon/src/test/java "$dir/mods/horizon/src/test/"
+          Copy-Item research-lock.json, README.md, LICENSE, docs/release-notes-offline.md "$dir/"
+          Copy-Item -Recurse LICENSES "$dir/"
+          Compress-Archive -Path $dir -DestinationPath dist/horizon-windows-x86_64.zip
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: The archive runs the launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tmp = Join-Path $env:RUNNER_TEMP 'archive'
+          Expand-Archive dist/horizon-windows-x86_64.zip -DestinationPath $tmp
+          $root = Join-Path $tmp 'horizon-windows-x86_64'
+          # Resources are absent by design, so --self-test exits 1; the JSON still says what it saw.
+          $setup = (py -3 (Join-Path $root 'tools/launcher.py') --self-test --json) | ConvertFrom-Json
+          if (-not $setup.game_built) { throw 'the launcher does not see horizon-client.exe' }
+          if (-not $setup.prepare_built) { throw 'the launcher does not see horizon-prepare.exe' }
+          if ($setup.game_binary -notlike '*target\fast\horizon-client.exe') { throw "unexpected game binary: $($setup.game_binary)" }
+          foreach ($exe in 'horizon-client.exe', 'horizon-prepare.exe', 'horizon-ctl.exe') {
+            if (-not (Test-Path (Join-Path $root "target/fast/$exe"))) { throw "missing $exe" }
+          }
+          if (-not (Test-Path (Join-Path $root 'Start Horizon.bat'))) { throw 'missing Start Horizon.bat' }
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizon-windows-x86_64
+          path: dist/horizon-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: macOS arm64
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fork-release-macos
+
+      - name: Build the game, horizon-prepare and horizon-ctl
+        run: |
+          cargo build --release --locked \
+            -p horizon-game --bin horizon-client \
+            -p horizon-client-lib --bin horizon-ctl \
+            -p horizon-prepare --bin horizon-prepare
+
+      - name: The programs start
+        run: |
+          ./target/release/horizon-client --help > /dev/null
+          ./target/release/horizon-prepare --help > /dev/null
+          ./target/release/horizon-ctl --help > /dev/null
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          dir=dist/horizon-macos-arm64
+          mkdir -p "$dir/target/fast" "$dir/tools"
+          install -m 755 target/release/horizon-client  "$dir/target/fast/horizon-client"
+          install -m 755 target/release/horizon-prepare "$dir/target/fast/horizon-prepare"
+          install -m 755 target/release/horizon-ctl     "$dir/target/fast/horizon-ctl"
+          install -m 755 tools/launcher.py tools/launcher.sh tools/play-offline.sh "$dir/tools/"
+          # Double-clickable entry: macOS opens .command files in Terminal.
+          install -m 755 "tools/Horizon Launcher.command" "$dir/Horizon Launcher.command"
+          install -d "$dir/mods/horizon/src/test"
+          cp -R mods/horizon/src/test/java "$dir/mods/horizon/src/test/"
+          install -m 644 research-lock.json README.md LICENSE docs/release-notes-offline.md "$dir/"
+          cp -r LICENSES "$dir/"
+          tar -czf "dist/horizon-macos-arm64.tar.gz" -C dist horizon-macos-arm64
+          ls -lh dist
+
+      - name: The archive runs the launcher
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          tar xzf dist/horizon-macos-arm64.tar.gz -C "$tmp"
+          cd "$tmp/horizon-macos-arm64"
+          python3 tools/launcher.py --self-test --json > setup.json || true
+          python3 - <<'PY'
+          import json, sys
+          setup = json.load(open("setup.json"))
+          missing = [key for key in ("game_built", "prepare_built") if not setup[key]]
+          if missing:
+              sys.exit(f"the archive's launcher does not see: {', '.join(missing)}")
+          PY
+          test -x target/fast/horizon-client
+          test -x target/fast/horizon-prepare
+          test -x target/fast/horizon-ctl
+          test -x tools/launcher.sh
+          test -x "Horizon Launcher.command"
+          file target/fast/horizon-client | grep -q 'Mach-O 64-bit executable arm64'
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizon-macos-arm64
+          path: dist/horizon-macos-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Collect the archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: horizon-*
+          merge-multiple: true
+          path: dist
+
+      - name: One checksum file for all platforms
+        run: |
+          set -euo pipefail
+          cd dist
+          ls -lh
+          test -f horizon-linux-x86_64.tar.gz
+          test -f horizon-windows-x86_64.zip
+          test -f horizon-macos-arm64.tar.gz
+          sha256sum *.tar.gz *.zip > SHA256SUMS
+          cat SHA256SUMS
+          for archive in *.tar.gz; do
+            if tar tzf "$archive" | grep -Eq '\.jar$|(^|/)minecraft/|(^|/)\.local/'; then
+              echo "$archive holds game files"; exit 1
+            fi
+          done
+          if unzip -Z1 horizon-windows-x86_64.zip | grep -Eq '\.jar$|(^|/)minecraft/|(^|/)\.local/'; then
+            echo "the Windows archive holds game files"; exit 1
+          fi
+          sha256sum -c SHA256SUMS
 
       - name: Publish the release
         env:
@@ -115,7 +345,7 @@ jobs:
           DRAFT: ${{ inputs.draft }}
         run: |
           set -euo pipefail
-          files=(dist/horizon-linux-x86_64.tar.gz dist/SHA256SUMS)
+          files=(dist/horizon-linux-x86_64.tar.gz dist/horizon-windows-x86_64.zip dist/horizon-macos-arm64.tar.gz dist/SHA256SUMS)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
             if [ "$DRAFT" = "false" ]; then
@@ -127,7 +357,7 @@ jobs:
             gh release create "$TAG" "${files[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "Horizon 26.3 — offline Linux build, no account needed" \
+              --title "Horizon 26.3 — offline build, no account needed (Linux, Windows, macOS)" \
               --notes-file docs/release-notes-offline.md \
               "${args[@]}"
           fi

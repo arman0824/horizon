@@ -38,6 +38,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from collections import deque
 from pathlib import Path
 
@@ -51,8 +52,11 @@ except Exception:  # pragma: no cover - depends on the machine
     filedialog = messagebox = ttk = None
 
 ROOT = Path(__file__).resolve().parents[1]
-GAME_BIN = ROOT / "target" / "fast" / "horizon-client"
-PREPARE_BIN = ROOT / "target" / "fast" / "horizon-prepare"
+BINARY_SUFFIX = ".exe" if os.name == "nt" else ""
+LAUNCHER_HINT = "Start Horizon.bat" if os.name == "nt" else "tools/launcher.sh"
+GAME_BIN = ROOT / "target" / "fast" / f"horizon-client{BINARY_SUFFIX}"
+PREPARE_BIN = ROOT / "target" / "fast" / f"horizon-prepare{BINARY_SUFFIX}"
+CTL_BIN = ROOT / "target" / "fast" / f"horizon-ctl{BINARY_SUFFIX}"
 DEFAULT_GAME_DIR = Path.home() / "horizon-game"
 RESOURCES_MARK = "horizon-resources.json"
 SOUNDS_MARK = "assets/minecraft/sounds.json"
@@ -61,9 +65,17 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 # The fork's own release: prebuilt programs for machines that should not compile Horizon.
 RELEASE_REPO = "arman0824/horizon"
-PREBUILT_ASSET = "horizon-linux-x86_64.tar.gz"
+# One archive per platform; the launcher takes the one for the machine it runs on.
+PREBUILT_ASSETS = {
+    ("linux", "x86_64"): "horizon-linux-x86_64.tar.gz",
+    ("win32", "x86_64"): "horizon-windows-x86_64.zip",
+    ("darwin", "arm64"): "horizon-macos-arm64.tar.gz",
+}
+PREBUILT_ASSET = PREBUILT_ASSETS[("linux", "x86_64")]
 SHA256SUMS_ASSET = "SHA256SUMS"
-PREBUILT_BINARIES = ("horizon-client", "horizon-prepare", "horizon-ctl")
+PREBUILT_BINARIES = tuple(
+    f"horizon-{name}{BINARY_SUFFIX}" for name in ("client", "prepare", "ctl")
+)
 USER_AGENT = "horizon-launcher"
 
 
@@ -338,11 +350,31 @@ def total_memory_gb() -> float | None:
         if sys.platform == "darwin":
             out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True, timeout=5)
             return int(out.strip()) / 1e9
-        if os.name != "nt":
-            with open("/proc/meminfo", encoding="utf-8") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        return int(line.split()[1]) * 1024 / 1e9
+        if os.name == "nt":
+            import ctypes
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("length", ctypes.c_ulong),
+                    ("load", ctypes.c_ulong),
+                    ("total_physical", ctypes.c_ulonglong),
+                    ("available_physical", ctypes.c_ulonglong),
+                    ("total_page_file", ctypes.c_ulonglong),
+                    ("available_page_file", ctypes.c_ulonglong),
+                    ("total_virtual", ctypes.c_ulonglong),
+                    ("available_virtual", ctypes.c_ulonglong),
+                    ("available_extended_virtual", ctypes.c_ulonglong),
+                ]
+
+            status = MemoryStatus()
+            status.length = ctypes.sizeof(MemoryStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.total_physical / 1e9
+            return None
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) * 1024 / 1e9
     except Exception:
         return None
     return None
@@ -449,12 +481,24 @@ def split_extra_arguments(text: str) -> list[str]:
 # --------------------------------------------------------------------------- self-test
 
 
+def this_platform() -> tuple[str, str]:
+    """(system, machine) in the names the release uses: linux/win32/darwin, x86_64/arm64."""
+    system = "win32" if os.name == "nt" else ("darwin" if sys.platform == "darwin" else "linux")
+    machine = platform.machine().lower()
+    machine = {"amd64": "x86_64", "aarch64": "arm64"}.get(machine, machine)
+    return system, machine
+
+
+def asset_for(system: str, machine: str) -> str | None:
+    """The release archive named for a system and machine, or None where none is published."""
+    machine = machine.lower()
+    machine = {"amd64": "x86_64", "aarch64": "arm64"}.get(machine, machine)
+    return PREBUILT_ASSETS.get((system, machine))
+
+
 def prebuilt_asset() -> str | None:
     """The release asset for this machine, or None where the fork publishes none."""
-    machine = platform.machine().lower()
-    if sys.platform.startswith("linux") and machine in ("x86_64", "amd64"):
-        return PREBUILT_ASSET
-    return None
+    return asset_for(*this_platform())
 
 
 def checksum_for(sums: str, name: str) -> str:
@@ -483,35 +527,60 @@ def fetch_json(url: str, timeout: int = 60):
         ) from error
 
 
+def archive_members(archive: Path):
+    """Yield (name, stream) for every file in a .zip or tar archive."""
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as bundle:
+            for info in bundle.infolist():
+                if info.is_dir():
+                    continue
+                with bundle.open(info) as source:
+                    yield info.filename, source
+    else:
+        with tarfile.open(archive, "r:*") as bundle:
+            for member in bundle.getmembers():
+                if not member.isfile():
+                    continue
+                source = bundle.extractfile(member)
+                if source is None:
+                    continue
+                with source:
+                    yield member.name, source
+
+
 def install_prebuilt(archive: Path, root: Path = ROOT) -> list[Path]:
     """Copy a release archive's programs into root/target/fast, where the launcher looks.
 
     Only the named binaries are taken; an archive with a path outside it, or without the game
-    and the preparer, is refused.
+    and the preparer, is refused. The Unix tar.gz archives and the Windows .zip both work.
     """
     dest = root / "target" / "fast"
     dest.mkdir(parents=True, exist_ok=True)
     partials: dict[str, Path] = {}
     try:
-        with tarfile.open(archive, "r:*") as tar:
-            for member in tar.getmembers():
-                parts = Path(member.name).parts
-                if member.name.startswith("/") or ".." in parts:
-                    raise ValueError(f"{archive.name} holds an unsafe path: {member.name}")
-                if not member.isfile() or parts[-3:-1] != ("target", "fast"):
-                    continue
-                name = parts[-1]
-                if name not in PREBUILT_BINARIES:
-                    continue
-                source = tar.extractfile(member)
-                if source is None:
-                    continue
-                partial = dest / f"{name}.part"
-                with open(partial, "wb") as out:
-                    shutil.copyfileobj(source, out)
-                os.chmod(partial, 0o755)
-                partials[name] = partial
-        missing = [name for name in ("horizon-client", "horizon-prepare") if name not in partials]
+        for name_in_archive, source in archive_members(archive):
+            parts = Path(name_in_archive).parts
+            if (
+                name_in_archive.startswith(("/", "\\"))
+                or re.match(r"^[A-Za-z]:", name_in_archive)
+                or ".." in parts
+            ):
+                raise ValueError(f"{archive.name} holds an unsafe path: {name_in_archive}")
+            if parts[-3:-1] != ("target", "fast"):
+                continue
+            name = parts[-1]
+            if name not in PREBUILT_BINARIES:
+                continue
+            partial = dest / f"{name}.part"
+            with open(partial, "wb") as out:
+                shutil.copyfileobj(source, out)
+            os.chmod(partial, 0o755)
+            partials[name] = partial
+        missing = [
+            name
+            for name in (f"horizon-client{BINARY_SUFFIX}", f"horizon-prepare{BINARY_SUFFIX}")
+            if name not in partials
+        ]
         if missing:
             raise ValueError(f"{archive.name} has no {', '.join(missing)}")
     except BaseException:
@@ -532,8 +601,8 @@ def download_prebuilt(log=print, repo: str = RELEASE_REPO) -> int:
     asset = prebuilt_asset()
     if asset is None:
         log(
-            "No prebuilt build is published for this machine: the fork ships Linux x86_64 "
-            "programs. Build from source here instead (Play does it)."
+            "No prebuilt build is published for this machine: the fork ships Linux x86_64, "
+            "Windows x86_64 and macOS arm64 programs. Build from source here instead (Play does it)."
         )
         return 1
     log(f"Finding {asset} in the latest release of {repo}…")
@@ -617,7 +686,7 @@ def self_test(as_json: bool = False) -> int:
         if setup["tk"]:
             print(f"tkinter          yes ({setup['tk_version']})")
         else:
-            print("tkinter          NO — the window cannot open; run tools/launcher.sh")
+            print(f"tkinter          NO — the window cannot open; run {LAUNCHER_HINT}")
         if setup["memory_gb"] is not None:
             memory = f"{setup['memory_gb']:.1f} GB"
             if setup["swap_gb"]:
@@ -993,7 +1062,7 @@ class App:
                     text=True,
                     bufsize=1,
                     env=environment,
-                    start_new_session=True,
+                    start_new_session=os.name != "nt",
                 )
                 self.process = process
                 if self.cancel_requested:
@@ -1280,13 +1349,13 @@ class App:
         if asset is None:
             self.warn(
                 "Download prebuilt",
-                "No prebuilt build is published for this machine. The fork ships Linux x86_64 "
-                "programs; on other systems Play builds the game from source.",
+                "No prebuilt build is published for this machine. The fork ships Linux x86_64, "
+                "Windows x86_64 and macOS arm64 programs; elsewhere Play builds the game from source.",
             )
             return
         if not self.confirm(
             "Download Horizon",
-            "Download the prebuilt Linux build (about 75 MB) and install the game's programs "
+            "Download the prebuilt build for this machine (about 75 MB) and install the game's programs "
             "in this folder?\n\nNothing is compiled. The archive is checked against the "
             "release's SHA-256 before it is used, and Play prepares the game files afterwards.",
         ):
@@ -1381,7 +1450,7 @@ class App:
                     stdout=out,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
-                    start_new_session=True,
+                    start_new_session=os.name != "nt",
                 )
         except Exception as error:
             self.error("Start the game", f"Could not start {command[0]}: {error}")
@@ -1476,7 +1545,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--download-prebuilt",
         action="store_true",
-        help="download and install the prebuilt Linux build, then exit",
+        help="download and install the prebuilt build for this machine, then exit",
     )
     parser.add_argument("--smoke-test", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--smoke-prepare", action="store_true", help=argparse.SUPPRESS)
@@ -1491,10 +1560,12 @@ def main(argv: list[str]) -> int:
     if tk is None:
         print(
             "launcher: this Python has no tkinter, so the window cannot open.\n"
-            "Run tools/launcher.sh (it finds a Python that has Tk), or install Tk:\n"
+            "Run tools/launcher.sh (Linux, macOS) or Start Horizon.bat (Windows); they find a\n"
+            "Python that has Tk. Or install Tk:\n"
             "   macOS (Homebrew): brew install python-tk\n"
             "   Debian/Ubuntu:    sudo apt install python3-tk\n"
-            "Without a window: ./tools/play-offline.sh still plays.",
+            "   Windows:          the python.org installer includes Tk by default\n"
+            "Without a window: tools/play-offline.sh (Linux, macOS) still plays.",
             file=sys.stderr,
         )
         return 1
@@ -1550,7 +1621,7 @@ def main(argv: list[str]) -> int:
 
         scratch = tempfile.mkdtemp(prefix="horizon-launcher-smoke-")
         socket = Path(scratch) / "ctl.sock"
-        ctl = ROOT / "target" / "fast" / "horizon-ctl"
+        ctl = CTL_BIN
         app.game_var.set(scratch)
         state = {"started": False, "waited": 0, "reached": False}
 

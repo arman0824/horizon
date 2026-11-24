@@ -17,3 +17,7 @@ tools/mixins/*.patch text eol=lf
 # Append-only inventory/ledger tables: independent rows merge without false conflicts (CI still checks syntax and duplicates).
 tools/ci/ignored-tests/*.txt merge=union
 docs/paper-ledger.md merge=union
+
+# Entry points: cmd.exe wants CRLF in a batch file, and Terminal's .command wants LF.
+tools/launcher.bat text eol=crlf
+"tools/Horizon Launcher.command" text eol=lf
