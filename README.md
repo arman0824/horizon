@@ -44,6 +44,9 @@ sudo apt install openjdk-25-jdk
 
 # Python with tkinter — Debian/Ubuntu (macOS: brew install python-tk)
 sudo apt install python3-tk
+
+# Windows: rustup-init.exe (https://rustup.rs), Temurin 25 (https://adoptium.net/?specification=25),
+# and the python.org installer with "tcl/tk and IDLE" ticked. Run the launcher with `py -3 tools\launcher.py`.
 ```
 
 Check: `rustc --version` (1.95+), `java -version`, `javac -version`, `python3 -c "import tkinter"`.
@@ -58,7 +61,11 @@ cd horizon
 **3. Open the launcher.**
 
 ```sh
+# Linux / macOS
 ./tools/launcher.sh
+
+# Windows (PowerShell / cmd)
+py -3 tools\launcher.py
 ```
 
 **4. Press Play.** The window finds Minecraft automatically; use **Browse…** if it does not.
@@ -71,6 +78,8 @@ cd horizon
 
 Later Plays start in seconds and repair only what changed. If you have 6–8 GB RAM, tick
 **Low-memory device** before the first build.
+
+Prebuilt archives are Linux x86_64 only; on Windows and macOS, build from source as above.
 
 ## Low-RAM Linux machine — prebuilt archive (no compiler)
 
