@@ -38,6 +38,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from collections import deque
 from pathlib import Path
 
@@ -65,6 +66,13 @@ PREBUILT_ASSET = "horizon-linux-x86_64.tar.gz"
 SHA256SUMS_ASSET = "SHA256SUMS"
 PREBUILT_BINARIES = ("horizon-client", "horizon-prepare", "horizon-ctl")
 USER_AGENT = "horizon-launcher"
+
+# Mods and packs live beside options.txt in the game folder the launcher starts the game in.
+MODS_DIR = "horizon-mods"
+SHADER_DIR = "shaderpacks"
+RESOURCE_DIR = "resourcepacks"
+MOD_LIST = "horizon-mods.txt"
+MOD_MANIFEST = "horizon-mod.toml"
 
 
 # --------------------------------------------------------------------------- what is here
@@ -647,6 +655,188 @@ def settings_game_dir() -> Path:
     return Path(load_settings().get("game_dir") or DEFAULT_GAME_DIR).expanduser()
 
 
+# --------------------------------------------------------------------------- mods and packs
+
+
+def _manifest_text(source: Path) -> str:
+    """`horizon-mod.toml` from a `.hmod` (a zip) or a folder mod, without extracting anything."""
+    if source.is_dir():
+        manifest = source / MOD_MANIFEST
+        if not manifest.is_file():
+            raise ValueError(f"{source.name} has no {MOD_MANIFEST}")
+        return manifest.read_text(encoding="utf-8", errors="replace")
+    if not zipfile.is_zipfile(source):
+        raise ValueError(f"{source.name} is not a .hmod (a zip holding {MOD_MANIFEST})")
+    with zipfile.ZipFile(source) as archive:
+        try:
+            info = archive.getinfo(MOD_MANIFEST)
+        except KeyError:
+            raise ValueError(f"{source.name} has no {MOD_MANIFEST} at its root") from None
+        if info.file_size > 1 << 20:
+            raise ValueError(f"{source.name}'s {MOD_MANIFEST} is too large")
+        return archive.read(info).decode("utf-8", errors="replace")
+
+
+def toml_top_level(text: str) -> dict[str, str]:
+    """The string keys before the first `[table]` (Python 3.10 has no tomllib)."""
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            break
+        key, sep, value = line.partition("=")
+        value = value.strip()
+        if sep and len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            values[key.strip()] = value[1:-1]
+    return values
+
+
+def read_mod(source: Path) -> dict:
+    """A mod's id, name, version and whether it is native, from its manifest."""
+    text = _manifest_text(source)
+    top = toml_top_level(text)
+    mod_id = top.get("id", "").strip()
+    if not mod_id:
+        raise ValueError(f"{source.name} has no id in {MOD_MANIFEST}")
+    return {
+        "id": mod_id,
+        "name": top.get("name") or mod_id,
+        "version": top.get("version", ""),
+        "native": any(line.strip() == "[native]" for line in text.splitlines()),
+    }
+
+
+def enabled_mod_ids(game_dir: Path) -> set[str]:
+    """The ids turned on by `horizon-mods.txt`."""
+    path = game_dir / MOD_LIST
+    ids: set[str] = set()
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, sep, value = line.partition(":")
+            if sep and key.strip().startswith("mod.") and value.strip() == "true":
+                ids.add(key.strip()[len("mod.") :])
+    return ids
+
+
+def set_mod_enabled(game_dir: Path, mod_id: str, on: bool) -> None:
+    """Turn one mod on or off, keeping every other line of `horizon-mods.txt` as it was."""
+    path = game_dir / MOD_LIST
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    prefix = f"mod.{mod_id}:"
+    line = f"{prefix}{'true' if on else 'false'}"
+    kept: list[str] = []
+    replaced = False
+    for existing in lines:
+        if existing.strip().startswith(prefix):
+            if not replaced:
+                kept.append(line)
+                replaced = True
+            continue
+        kept.append(existing)
+    if not replaced:
+        kept.append(line)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+
+def installed_mods(game_dir: Path) -> list[dict]:
+    """The mods in `horizon-mods/`, each with its on/off state, sorted by name."""
+    directory = game_dir / MODS_DIR
+    if not directory.is_dir():
+        return []
+    enabled = enabled_mod_ids(game_dir)
+    mods = []
+    for entry in sorted(directory.iterdir(), key=lambda p: p.name.lower()):
+        if entry.name.startswith(".") or not (entry.is_dir() or entry.suffix.lower() == ".hmod"):
+            continue
+        try:
+            info = read_mod(entry)
+        except ValueError:
+            continue
+        info["on"] = info["id"] in enabled
+        info["path"] = entry
+        mods.append(info)
+    return mods
+
+
+def install_mod(source: Path, game_dir: Path) -> dict:
+    """Copy a content mod into `horizon-mods/` and turn it on."""
+    info = read_mod(source)
+    if info["native"]:
+        raise ValueError(f"{source.name} is a native (code) mod; this fork runs content mods only")
+    destination = game_dir / MODS_DIR / source.name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_dir():
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(source, destination)
+    else:
+        shutil.copy2(source, destination)
+    set_mod_enabled(game_dir, info["id"], True)
+    return info
+
+
+def _archive_names(source: Path) -> list[str]:
+    if not zipfile.is_zipfile(source):
+        return []
+    with zipfile.ZipFile(source) as archive:
+        return archive.namelist()
+
+
+def _has(names: list[str], target: str) -> bool:
+    """Whether `target` is at the archive's root or one folder down."""
+    for name in names:
+        parts = [part for part in name.split("/") if part]
+        if parts[:1] == [target] or (len(parts) >= 2 and parts[1] == target):
+            return True
+    return False
+
+
+def is_shader_pack(source: Path) -> bool:
+    """Horizon's pack (a manifest) or the classic `shaders/` layout, as a folder or a zip."""
+    if source.is_dir():
+        return (source / "horizon-shaders.toml").is_file() or (source / "shaders").is_dir()
+    names = _archive_names(source)
+    return _has(names, "horizon-shaders.toml") or _has(names, "shaders")
+
+
+def is_resource_pack(source: Path) -> bool:
+    if source.is_dir():
+        return (source / "pack.mcmeta").is_file()
+    return _has(_archive_names(source), "pack.mcmeta")
+
+
+def pack_destination(source: Path, game_dir: Path, kind: str) -> Path:
+    """Where a shader or resource pack goes, refusing a source that is not that kind."""
+    if kind == "shader":
+        if not is_shader_pack(source):
+            raise ValueError(
+                f"{source.name} is not a shader pack: it needs a shaders/ folder or "
+                "horizon-shaders.toml"
+            )
+        folder = SHADER_DIR
+    else:
+        if not is_resource_pack(source):
+            raise ValueError(f"{source.name} is not a resource pack: it needs pack.mcmeta")
+        folder = RESOURCE_DIR
+    return game_dir / folder / source.name
+
+
+def install_pack(source: Path, game_dir: Path, kind: str) -> Path:
+    """Copy a shader or resource pack into its folder."""
+    destination = pack_destination(source, game_dir, kind)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_dir():
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(source, destination)
+    else:
+        shutil.copy2(source, destination)
+    return destination
+
+
 # --------------------------------------------------------------------------- window
 
 
@@ -712,15 +902,15 @@ class App:
         except Exception:
             pass
         self.root.title(f"Horizon {self.version} — offline, no account")
-        self.root.minsize(780, 600)
-        self.root.geometry("800x620+120+120")
+        self.root.minsize(780, 620)
+        self.root.geometry("820x680+120+120")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
         frame = ttk.Frame(self.root, padding=14)
         frame.grid(row=0, column=0, sticky="nsew")
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(8, weight=1)
+        frame.rowconfigure(10, weight=1)
 
         title_font = tkfont.nametofont("TkDefaultFont").copy()
         title_font.configure(size=20, weight="bold")
@@ -753,8 +943,22 @@ class App:
             command=self.refresh,
         ).pack(side="left", padx=(18, 0))
 
+        packs = ttk.Frame(frame)
+        packs.grid(row=6, column=0, columnspan=4, sticky="we", pady=(8, 0))
+        ttk.Label(packs, text="Mods & packs:").pack(side="left")
+        ttk.Button(packs, text="Add mod…", command=self.add_mod).pack(side="left", padx=(8, 0))
+        ttk.Button(packs, text="Add shader pack…", command=self.add_shader_pack).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(packs, text="Add resource pack…", command=self.add_resource_pack).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(packs, text="Installed mods…", command=self.manage_mods).pack(
+            side="left", padx=(6, 0)
+        )
+
         buttons = ttk.Frame(frame)
-        buttons.grid(row=6, column=0, columnspan=4, sticky="we", pady=(10, 4))
+        buttons.grid(row=7, column=0, columnspan=4, sticky="we", pady=(10, 4))
         self.play_button = ttk.Button(buttons, text="Play", command=self.play)
         self.play_button.pack(side="left")
         self.prepare_button = ttk.Button(buttons, text="Prepare game files", command=self.prepare)
@@ -770,10 +974,10 @@ class App:
         ttk.Button(buttons, text="Check again", command=self.refresh).pack(side="right")
 
         self.progress = ttk.Progressbar(frame, maximum=1.0)
-        self.progress.grid(row=7, column=0, columnspan=4, sticky="we", pady=(4, 4))
+        self.progress.grid(row=8, column=0, columnspan=4, sticky="we", pady=(4, 4))
 
         status = ttk.Frame(frame)
-        status.grid(row=8, column=0, columnspan=4, sticky="new")
+        status.grid(row=9, column=0, columnspan=4, sticky="new")
         status.columnconfigure(0, weight=1)
         ttk.Label(status, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
         ttk.Label(status, textvariable=self.detail_var, foreground="#666").grid(
@@ -781,8 +985,7 @@ class App:
         )
 
         log_frame = ttk.Frame(frame)
-        log_frame.grid(row=9, column=0, columnspan=4, sticky="nsew", pady=(10, 0))
-        frame.rowconfigure(9, weight=1)
+        log_frame.grid(row=10, column=0, columnspan=4, sticky="nsew", pady=(10, 0))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self.log = tk.Text(
@@ -806,7 +1009,7 @@ class App:
         self.log.tag_configure("quiet", foreground="#666666")
 
         footer = ttk.Frame(frame)
-        footer.grid(row=10, column=0, columnspan=4, sticky="we", pady=(8, 0))
+        footer.grid(row=11, column=0, columnspan=4, sticky="we", pady=(8, 0))
         ttk.Button(footer, text="Open worlds folder", command=self.open_game_folder).pack(side="left")
         ttk.Button(footer, text="Open game log", command=self.open_game_log).pack(side="left", padx=8)
         ttk.Label(footer, text=f"resources: {resources_dir()}", foreground="#666").pack(side="right")
@@ -878,6 +1081,195 @@ class App:
                 subprocess.Popen(["xdg-open", str(path)])
         except Exception as error:
             self.write(f"Could not open {path}: {error}", "error")
+
+    # -- mods and packs
+
+    def current_game_dir(self) -> Path:
+        return Path(self.game_var.get().strip() or DEFAULT_GAME_DIR).expanduser()
+
+    def ask_source(self, title: str, filetypes: list[tuple[str, str]]) -> Path | None:
+        """A file or a folder: packs and mods come both ways, and Tk has no dialog for both."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        ttk.Label(dialog, text=title, padding=(14, 12, 14, 2)).pack(anchor="w")
+        ttk.Label(
+            dialog,
+            text="Choose a file, or a folder holding the unpacked one.",
+            foreground="#666",
+            padding=(14, 0, 14, 10),
+        ).pack(anchor="w")
+        row = ttk.Frame(dialog, padding=(14, 0, 14, 14))
+        row.pack()
+        chosen: dict[str, Path | None] = {"path": None}
+
+        def pick_file() -> None:
+            selected = filedialog.askopenfilename(parent=dialog, title=title, filetypes=filetypes)
+            if selected:
+                chosen["path"] = Path(selected)
+                dialog.destroy()
+
+        def pick_folder() -> None:
+            selected = filedialog.askdirectory(parent=dialog, title=title)
+            if selected:
+                chosen["path"] = Path(selected)
+                dialog.destroy()
+
+        ttk.Button(row, text="Choose a file…", command=pick_file).pack(side="left")
+        ttk.Button(row, text="Choose a folder…", command=pick_folder).pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="Cancel", command=dialog.destroy).pack(side="left", padx=(8, 0))
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+        return chosen["path"]
+
+    def add_mod(self) -> None:
+        source = self.ask_source(
+            "Add a content mod", [("Horizon mods", "*.hmod"), ("All files", "*")]
+        )
+        if source:
+            self.install_mod_source(source)
+
+    def install_mod_source(self, source: Path) -> None:
+        try:
+            info = read_mod(source)
+        except ValueError as error:
+            self.error("Add mod", str(error))
+            return
+        if info["native"]:
+            self.error(
+                "Add mod",
+                f"{source.name} is a native (code) mod.\n\nThis fork runs content mods only: a "
+                "native mod has to be built into the game, which the launcher does not do.",
+            )
+            return
+        destination = self.current_game_dir() / MODS_DIR / source.name
+        if destination.exists() and not self.confirm(
+            "Replace mod", f"{destination.name} is already installed. Replace it?"
+        ):
+            return
+        try:
+            install_mod(source, self.current_game_dir())
+        except (OSError, ValueError) as error:
+            self.error("Add mod", f"Could not install {source.name}: {error}")
+            return
+        version = f" {info['version']}" if info["version"] else ""
+        self.write(
+            f"Installed and turned on {info['name']}{version}. It loads the next time you press Play.",
+            "good",
+        )
+
+    def add_shader_pack(self) -> None:
+        source = self.ask_source(
+            "Add a shader pack", [("Shader packs", "*.zip *.hshader"), ("All files", "*")]
+        )
+        if source:
+            self.install_pack_source(source, "shader")
+
+    def add_resource_pack(self) -> None:
+        source = self.ask_source(
+            "Add a resource pack", [("Resource packs", "*.zip"), ("All files", "*")]
+        )
+        if source:
+            self.install_pack_source(source, "resource")
+
+    def install_pack_source(self, source: Path, kind: str) -> None:
+        label = "shader pack" if kind == "shader" else "resource pack"
+        try:
+            destination = pack_destination(source, self.current_game_dir(), kind)
+        except ValueError as error:
+            self.error(f"Add {label}", str(error))
+            return
+        if destination.exists() and not self.confirm(
+            "Replace pack", f"{destination.name} is already installed. Replace it?"
+        ):
+            return
+        try:
+            install_pack(source, self.current_game_dir(), kind)
+        except (OSError, ValueError) as error:
+            self.error(f"Add {label}", f"Could not install {source.name}: {error}")
+            return
+        where = (
+            "Options → Horizon Settings → Shader Packs"
+            if kind == "shader"
+            else "Options → Resource Packs"
+        )
+        self.write(f"Added the {label} {source.name}. Choose it in game: {where}.", "good")
+
+    def open_folder(self, name: str) -> None:
+        path = self.current_game_dir() / name
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            self.error("Open folder", f"Could not create {path}: {error}")
+            return
+        self.reveal(path)
+
+    def manage_mods(self) -> None:
+        game_dir = self.current_game_dir()
+        window = tk.Toplevel(self.root)
+        window.title("Installed mods")
+        window.transient(self.root)
+        window.geometry("640x430")
+        frame = ttk.Frame(window, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=f"Content mods in {game_dir / MODS_DIR}").pack(anchor="w")
+        ttk.Label(
+            frame,
+            text="A tick applies the next time you press Play.",
+            foreground="#666",
+        ).pack(anchor="w", pady=(0, 8))
+
+        body = ttk.Frame(frame)
+        body.pack(fill="both", expand=True)
+        canvas = tk.Canvas(body, highlightthickness=0)
+        scroll = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        mods = installed_mods(game_dir)
+        if not mods:
+            ttk.Label(inner, text="No mods installed yet — use Add mod… on the launcher.").pack(
+                anchor="w"
+            )
+        for mod in mods:
+            var = tk.BooleanVar(value=mod["on"])
+            label = " ".join(part for part in (mod["name"], mod["version"]) if part)
+
+            def toggle(mod: dict = mod, var: tk.BooleanVar = var) -> None:
+                try:
+                    set_mod_enabled(game_dir, mod["id"], var.get())
+                except OSError as error:
+                    self.error("Mods", f"Could not update {MOD_LIST}: {error}")
+                    return
+                self.write(
+                    f"{mod['name']} is {'on' if var.get() else 'off'}; it applies the next time "
+                    "you press Play.",
+                    "good",
+                )
+
+            ttk.Checkbutton(inner, text=label, variable=var, command=toggle).pack(
+                anchor="w", pady=1
+            )
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(10, 0))
+        ttk.Button(
+            buttons, text="Open mods folder", command=lambda: self.open_folder(MODS_DIR)
+        ).pack(side="left")
+        ttk.Button(
+            buttons, text="Open shader packs folder", command=lambda: self.open_folder(SHADER_DIR)
+        ).pack(side="left", padx=6)
+        ttk.Button(
+            buttons,
+            text="Open resource packs folder",
+            command=lambda: self.open_folder(RESOURCE_DIR),
+        ).pack(side="left")
+        ttk.Button(buttons, text="Close", command=window.destroy).pack(side="right")
 
     # -- state and log
 

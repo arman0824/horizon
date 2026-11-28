@@ -148,9 +148,33 @@ It holds no Minecraft jars, assets or sounds — those stay on your machine.
 | **Worlds & settings** | Saves, `options.txt`, player name and logs (default `~/horizon-game`) |
 | **Copy the sounds too** | On by default, about 380 MB from your own files; off means silence |
 | **Low-memory device** | One compiler job and a 1 GB Java heap for 4–8 GB machines; on automatically below 8 GB |
+| **Add mod… / Add shader pack… / Add resource pack…** | Copies a mod or pack into the game folder and shows where to turn it on |
+| **Installed mods…** | Turns content mods on or off, and opens the mods and packs folders |
 | **Download prebuilt** | Installs the Linux release archive, no compilation (Linux x86_64 only) |
 | **Prepare game files** | Runs preparation again |
 | **Play** | Builds (first time) and prepares if needed, then starts the game |
+
+## Mods, shader packs and resource packs
+
+They live in the game folder (**Worlds & settings**, `~/horizon-game` by default). The launcher
+has one button per kind; each copies the files and opens the right folder.
+
+| | Button | Folder | Choose it in game |
+| --- | --- | --- | --- |
+| Content mods (`.hmod`) | **Add mod…** | `horizon-mods/` | **Options → Mods** (read-only list) |
+| Shader packs | **Add shader pack…** | `shaderpacks/` | **Options → Horizon Settings → Shader Packs** |
+| Resource packs | **Add resource pack…** | `resourcepacks/` | **Options → Resource Packs** |
+
+- **Add mod…** turns a content mod on. A mod copied in by hand is off until you tick it in
+  **Installed mods…**.
+- Shader packs can be Horizon packs (`.hshader`, or a folder with `horizon-shaders.toml`) or the
+  classic `shaders/` layout. Resource packs are normal zips with `pack.mcmeta`.
+- **Fabric and NeoForge jars do not run**: they need Java, which Horizon does not use. Native
+  (code) mods have to be built into the game; this launcher does not install them.
+- Changes apply the next time you press **Play**. Asset and data changes can reload live; mods
+  that add blocks, items or world generation need the restart.
+- **Browse Mods** in game downloads from the Horizon registry, so it needs internet; **Add mod…**
+  works offline.
 
 ## Terminal instead of the launcher
 

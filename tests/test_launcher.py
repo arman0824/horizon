@@ -4,6 +4,7 @@ import os
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -252,6 +253,123 @@ class SelfTestTest(unittest.TestCase):
         self.assertEqual(data["version"], launcher.pins()["version"])
         self.assertIn("game_built", data)
         self.assertIn("prepare_built", data)
+
+
+class ModsAndPacksTest(unittest.TestCase):
+    def hmod(self, folder: Path, manifest: str, name: str = "ruby.hmod") -> Path:
+        path = folder / name
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("horizon-mod.toml", manifest)
+        return path
+
+    def test_reads_a_content_mod_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = self.hmod(
+                Path(tmp),
+                'id = "ruby"\nname = "Ruby Blocks"\nversion = "1.2.3"\napi = "0.2"\n'
+                'capabilities = ["registries"]\n\n[content]\n',
+            )
+            info = launcher.read_mod(mod)
+            self.assertEqual(info["id"], "ruby")
+            self.assertEqual(info["name"], "Ruby Blocks")
+            self.assertEqual(info["version"], "1.2.3")
+            self.assertFalse(info["native"])
+
+    def test_a_native_mod_is_recognised(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = self.hmod(
+                Path(tmp), 'id = "fast"\nname = "Fast"\nversion = "1.0.0"\n\n[native]\ngame = "26.3"\n'
+            )
+            self.assertTrue(launcher.read_mod(mod)["native"])
+
+    def test_a_zip_without_a_manifest_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "not-a-mod.hmod"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("readme.txt", "hello")
+            with self.assertRaises(ValueError):
+                launcher.read_mod(path)
+
+    def test_installing_a_mod_copies_it_and_turns_it_on(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp) / "game"
+            mod = self.hmod(Path(tmp), 'id = "ruby"\nname = "Ruby"\nversion = "1.0.0"\n')
+            launcher.install_mod(mod, game)
+            self.assertTrue((game / "horizon-mods" / "ruby.hmod").is_file())
+            self.assertIn("mod.ruby:true", (game / "horizon-mods.txt").read_text())
+
+    def test_a_folder_mod_is_copied_whole(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "ruby"
+            (source / "assets").mkdir(parents=True)
+            (source / "horizon-mod.toml").write_text('id = "ruby"\nname = "Ruby"\nversion = "1"\n')
+            (source / "assets" / "a.txt").write_text("x")
+            game = Path(tmp) / "game"
+            launcher.install_mod(source, game)
+            self.assertTrue((game / "horizon-mods" / "ruby" / "assets" / "a.txt").is_file())
+
+    def test_turning_a_mod_off_keeps_the_other_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            (game / "horizon-mods.txt").write_text(
+                "mod.other:true\nkey.ruby.jump:key.keyboard.space\n"
+            )
+            launcher.set_mod_enabled(game, "ruby", True)
+            launcher.set_mod_enabled(game, "ruby", False)
+            text = (game / "horizon-mods.txt").read_text()
+            self.assertIn("mod.other:true", text)
+            self.assertIn("key.ruby.jump:key.keyboard.space", text)
+            self.assertIn("mod.ruby:false", text)
+            self.assertNotIn("mod.ruby:true", text)
+
+    def test_installed_mods_report_their_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp) / "game"
+            mod = self.hmod(Path(tmp), 'id = "ruby"\nname = "Ruby"\nversion = "1.0.0"\n')
+            launcher.install_mod(mod, game)
+            self.assertEqual(
+                [(m["id"], m["on"]) for m in launcher.installed_mods(game)], [("ruby", True)]
+            )
+            launcher.set_mod_enabled(game, "ruby", False)
+            self.assertEqual(
+                [(m["id"], m["on"]) for m in launcher.installed_mods(game)], [("ruby", False)]
+            )
+
+    def test_a_classic_shader_pack_is_a_zip_with_a_shaders_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = Path(tmp) / "nice.zip"
+            with zipfile.ZipFile(pack, "w") as archive:
+                archive.writestr("shaders/final.vsh", "void main() {}")
+            self.assertTrue(launcher.is_shader_pack(pack))
+            self.assertFalse(launcher.is_resource_pack(pack))
+            game = Path(tmp) / "game"
+            destination = launcher.install_pack(pack, game, "shader")
+            self.assertEqual(destination, game / "shaderpacks" / "nice.zip")
+            self.assertTrue(destination.is_file())
+
+    def test_a_horizon_pack_is_a_zip_with_its_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = Path(tmp) / "soft.hshader"
+            with zipfile.ZipFile(pack, "w") as archive:
+                archive.writestr("horizon-shaders.toml", 'id = "soft"\nname = "Soft"\n')
+            self.assertTrue(launcher.is_shader_pack(pack))
+
+    def test_a_resource_pack_needs_pack_mcmeta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = Path(tmp) / "faithful.zip"
+            with zipfile.ZipFile(pack, "w") as archive:
+                archive.writestr("pack.mcmeta", '{"pack": {"pack_format": 1}}')
+            self.assertTrue(launcher.is_resource_pack(pack))
+            game = Path(tmp) / "game"
+            self.assertTrue(launcher.install_pack(pack, game, "resource").is_file())
+
+    def test_a_shader_pack_is_refused_as_a_resource_pack(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = Path(tmp) / "nice.zip"
+            with zipfile.ZipFile(pack, "w") as archive:
+                archive.writestr("shaders/final.vsh", "void main() {}")
+            with self.assertRaises(ValueError):
+                launcher.install_pack(pack, Path(tmp) / "game", "resource")
 
 
 if __name__ == "__main__":
