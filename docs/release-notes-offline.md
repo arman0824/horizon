@@ -54,6 +54,13 @@ Without a window: `./tools/play-offline.sh` after preparing once with
 Every download the launcher makes is checked against the SHA-1 pinned in `research-lock.json`,
 and the archive itself against `SHA256SUMS`.
 
+## Mods, shader packs and resource packs
+
+The launcher has **Add mod…**, **Add shader pack…**, **Add resource pack…** and **Installed
+mods…**. They copy files into the game folder and turn content mods on; picking a shader or
+resource pack stays in game (**Options → Horizon Settings → Shader Packs**, **Options → Resource
+Packs**). Fabric and NeoForge jars do not run: they need Java, which Horizon does not use.
+
 ## On a 4 GB machine
 
 Press Play and let it prepare; no compilation happens, so the memory a build needs is never
